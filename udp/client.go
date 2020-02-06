@@ -1,11 +1,11 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"net"
 	"os"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -27,10 +27,12 @@ func main() {
 	defer c.Close()
 
 	for {
-		reader := bufio.NewReader(os.Stdin)
-		fmt.Print(">> ")
-		text, _ := reader.ReadString('\n')
-		data := []byte(text + "\n")
+		// reader := bufio.NewReader(os.Stdin)
+		// fmt.Print(">> ")
+		// text, _ := reader.ReadString('\n')
+		// data := []byte(text + "\n")
+		data := []byte(time.Now().UTC().String())
+		fmt.Printf("Client message Sent at time: %s\n", data)
 		_, err = c.Write(data)
 		if strings.TrimSpace(string(data)) == "STOP" {
 			fmt.Println("Exiting UDP client!")
@@ -44,10 +46,12 @@ func main() {
 
 		buffer := make([]byte, 1024)
 		n, _, err := c.ReadFromUDP(buffer)
+		rec_time := []byte(time.Now().UTC().String())
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
 		fmt.Printf("Reply: %s\n", string(buffer[0:n]))
+		fmt.Printf("Response received at time: %s\n", rec_time)
 	}
 }
