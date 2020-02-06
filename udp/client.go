@@ -28,14 +28,10 @@ func main() {
 	defer c.Close()
 
 	for {
-		// reader := bufio.NewReader(os.Stdin)
-		// fmt.Print(">> ")
-		// text, _ := reader.ReadString('\n')
-		// data := []byte(text + "\n")
-		time.Sleep(1 * time.Second)
+
+		time.Sleep(60 * time.Second)
 		now := time.Now()
 		nanos := strconv.FormatInt(now.UnixNano(), 10)
-		// strconv.FormatInt(time.Now().Unix(), 10)
 		data := []byte(nanos)
 		fmt.Printf("Client message Sent at time: %s\n", data)
 		_, err = c.Write(data)
@@ -53,7 +49,6 @@ func main() {
 		n, _, err := c.ReadFromUDP(buffer)
 		rec_time := time.Now()
 		rec_nanos := strconv.FormatInt(rec_time.UnixNano(), 10)
-		// rec_time := []byte(time.Now().UTC().String())
 		if err != nil {
 			fmt.Println(err)
 			return
