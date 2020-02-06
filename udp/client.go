@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -31,7 +32,11 @@ func main() {
 		// fmt.Print(">> ")
 		// text, _ := reader.ReadString('\n')
 		// data := []byte(text + "\n")
-		data := []byte(time.Now().UTC().String())
+		time.Sleep(1 * time.Second)
+		now := time.Now()
+		nanos := strconv.FormatInt(now.UnixNano(), 10)
+		// strconv.FormatInt(time.Now().Unix(), 10)
+		data := []byte(nanos)
 		fmt.Printf("Client message Sent at time: %s\n", data)
 		_, err = c.Write(data)
 		if strings.TrimSpace(string(data)) == "STOP" {
@@ -46,12 +51,14 @@ func main() {
 
 		buffer := make([]byte, 1024)
 		n, _, err := c.ReadFromUDP(buffer)
-		rec_time := []byte(time.Now().UTC().String())
+		rec_time := time.Now()
+		rec_nanos := strconv.FormatInt(rec_time.UnixNano(), 10)
+		// rec_time := []byte(time.Now().UTC().String())
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
 		fmt.Printf("Reply: %s\n", string(buffer[0:n]))
-		fmt.Printf("Response received at time: %s\n", rec_time)
+		fmt.Printf("Response received at time: %s\n", rec_nanos)
 	}
 }
