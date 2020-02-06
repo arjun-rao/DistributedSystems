@@ -1,58 +1,63 @@
 package main
 
 import (
-        "fmt"
-        "math/rand"
-        "net"
-        "os"
-        "strconv"
-        "strings"
-        "time"
+	"fmt"
+	"net"
+	"os"
+	"strconv"
+	"time"
 )
 
-func random(min, max int) int {
-        return rand.Intn(max-min) + min
+func handleConnection(connection *net.UDPConn) {
+
+	// Read message from UDP socket
+	buffer := make([]byte, 1024)
+	n, addr, err := connection.ReadFromUDP(buffer)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	// Print received message
+	if tReceive, err := strconv.ParseInt(string(buffer[0:n-1]), 10, 64); err == nil {
+		fmt.Printf("Request Receive Time: %s\n", time.Unix(0, tReceive).String())
+	}
+
+	tServer := time.Now().UnixNano()
+	data := []byte(strconv.FormatInt(tServer, 10))
+	_, err = connection.WriteToUDP(data, addr)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("Send Time: %s\n", time.Unix(0, tServer).String())
 }
 
 func main() {
-        arguments := os.Args
-        if len(arguments) == 1 {
-                fmt.Println("Please provide a port number!")
-                return
-        }
-        PORT := ":" + arguments[1]
+	arguments := os.Args
+	if len(arguments) == 1 {
+		fmt.Println("Please provide a port number!")
+		return
+	}
 
-        s, err := net.ResolveUDPAddr("udp4", PORT)
-        if err != nil {
-                fmt.Println(err)
-                return
-        }
+	PORT := ":" + arguments[1]
 
-        connection, err := net.ListenUDP("udp4", s)
-        if err != nil {
-                fmt.Println(err)
-                return
-        }
+	fmt.Printf("Listening on port %s\n", PORT)
 
-        defer connection.Close()
-        buffer := make([]byte, 1024)
-        rand.Seed(time.Now().Unix())
+	s, err := net.ResolveUDPAddr("udp4", PORT)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
-        for {
-                n, addr, err := connection.ReadFromUDP(buffer)
-                fmt.Print("-> ", string(buffer[0:n-1]))
+	connection, err := net.ListenUDP("udp4", s)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
-                if strings.TrimSpace(string(buffer[0:n])) == "STOP" {
-                        fmt.Println("Exiting UDP server!")
-                        return
-                }
+	defer connection.Close()
 
-                data := []byte(strconv.Itoa(random(1, 1001)))
-                fmt.Printf("data: %s\n", string(data))
-                _, err = connection.WriteToUDP(data, addr)
-                if err != nil {
-                        fmt.Println(err)
-                        return
-                }
-        }
+	for {
+		handleConnection(connection)
+	}
 }
