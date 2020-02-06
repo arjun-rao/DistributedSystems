@@ -33,7 +33,7 @@ func main() {
 		now := time.Now()
 		nanos := strconv.FormatInt(now.UnixNano(), 10)
 		data := []byte(nanos)
-		fmt.Printf("%s,\n", data)
+		fmt.Printf("%s,", data)
 		_, err = c.Write(data)
 		if strings.TrimSpace(string(data)) == "STOP" {
 			fmt.Println("Exiting UDP client!")
@@ -53,7 +53,7 @@ func main() {
 			fmt.Println(err)
 			return
 		}
-		fmt.Printf("%s,\n", string(buffer[0:n]))
+		fmt.Printf("%s,", string(buffer[0:n]))
 		fmt.Printf("%s,\n", rec_nanos)
 	}
 }
