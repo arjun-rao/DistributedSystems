@@ -31,15 +31,12 @@ func main() {
 		time.Sleep(60 * time.Second)
 		now := time.Now()
 		nanos := strconv.FormatInt(now.UnixNano(), 10)
-		counter++
 		data := []byte(nanos)
-		fmt.Printf("%s,", data)
 		_, err = c.Write(data)
-		// if strings.TrimSpace(string(data)) == "STOP" {
-		// 	fmt.Println("Exiting UDP client!")
-		// 	return
-		// }
-		if counter == 120 {
+		sendTime := time.Now().UnixNano()
+		fmt.Printf("%s,", strconv.FormatInt(sendTime, 10))
+		counter++
+		if counter == 121 {
 			return
 		}
 		if err != nil {
