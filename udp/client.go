@@ -5,7 +5,6 @@ import (
 	"net"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -24,22 +23,25 @@ func main() {
 		return
 	}
 
-	fmt.Printf("The UDP server is %s\n", c.RemoteAddr().String())
+	// fmt.Printf("The UDP server is %s\n", c.RemoteAddr().String())
 	defer c.Close()
-
+	counter := 0
 	for {
 
 		time.Sleep(60 * time.Second)
 		now := time.Now()
 		nanos := strconv.FormatInt(now.UnixNano(), 10)
+		counter++
 		data := []byte(nanos)
 		fmt.Printf("%s,", data)
 		_, err = c.Write(data)
-		if strings.TrimSpace(string(data)) == "STOP" {
-			fmt.Println("Exiting UDP client!")
+		// if strings.TrimSpace(string(data)) == "STOP" {
+		// 	fmt.Println("Exiting UDP client!")
+		// 	return
+		// }
+		if counter == 120 {
 			return
 		}
-
 		if err != nil {
 			fmt.Println(err)
 			return
