@@ -48,7 +48,7 @@ func main() {
 		buffer := make([]byte, 1024)
 		n, _, err := c.ReadFromUDP(buffer)
 		recTime := time.Now()
-		recNanos := strconv.FormatInt(rec_time.UnixNano(), 10)
+		recNanos := strconv.FormatInt(recTime.UnixNano(), 10)
 		if err != nil {
 			fmt.Println(err)
 			return
