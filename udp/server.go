@@ -17,11 +17,11 @@ func handleConnection(connection *net.UDPConn) {
 		fmt.Println(err)
 		return
 	}
-	// Print received message
-	if tReceive, err := strconv.ParseInt(string(buffer[0:n-1]), 10, 64); err == nil {
-		fmt.Printf("Request Receive Time: %s\n", time.Unix(0, tReceive).String())
+	tReceive, err := strconv.ParseInt(string(buffer[0:n]), 10, 64)
+	if err == nil {
+		tm := time.Unix(0, tReceive*int64(time.Nanosecond))
+		fmt.Printf("%s\n", tm.String())
 	}
-
 	tServer := time.Now().UnixNano()
 	data := []byte(strconv.FormatInt(tServer, 10))
 	_, err = connection.WriteToUDP(data, addr)
