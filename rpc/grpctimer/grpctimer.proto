@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+// option java_multiple_files = true;
+// option java_package = "io.grpc.examples.helloworld";
+// option java_outer_classname = "HelloWorldProto";
+
+package grpctimer;
+
+// The time service definition.
+service GrpcTime {
+  // Sends a greeting
+  rpc SendTime (GrpcTimeRequest) returns (GrpcTimeResponse) {}
+}
+
+// The request message containing the client's time.
+message GrpcTimeRequest {
+  int64 data = 1;
+}
+
+// The response message containing the server's time.
+message GrpcTimeResponse {
+  int64 data = 1;
+}
