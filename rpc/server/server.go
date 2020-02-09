@@ -12,6 +12,7 @@ import (
 	pb "ds/rpc/grpctimer"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 // server is used to implement helloworld.GreeterServer.
@@ -38,7 +39,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
-	s := grpc.NewServer()
+	s := grpc.NewServer(
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionIdle: 5 * time.Minute, // <--- This fixes it!
+		}),
+	)
 	pb.RegisterGrpcTimeServer(s, &server{})
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)

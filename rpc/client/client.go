@@ -32,7 +32,7 @@ func main() {
 	defer conn.Close()
 	c := pb.NewGrpcTimeClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
 	counter := 1
 	for {
