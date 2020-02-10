@@ -2,12 +2,11 @@
 
 ## To Compile
 ```
-go build -o out/server server.go
-go build -o out/client client.go
+go build -o server server.go
+go build -o client client.go
 ```
 ## To Run
 ```
-cd out
 ./server 1234
 ./client 127.0.0.1:1234
 ```

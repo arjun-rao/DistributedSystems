@@ -23,7 +23,6 @@ func main() {
 		return
 	}
 
-	// fmt.Printf("The UDP server is %s\n", c.RemoteAddr().String())
 	defer c.Close()
 	counter := 0
 	for {
