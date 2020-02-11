@@ -37,9 +37,9 @@ func main() {
 	counter := 1
 	for {
 
-		time.Sleep(60 * time.Second)
-		r, err := c.SendTime(ctx, &pb.GrpcTimeRequest{Data: time.Now().UnixNano()})
+		time.Sleep(10 * time.Second)
 		sendTime := time.Now().UnixNano()
+		r, err := c.SendTime(ctx, &pb.GrpcTimeRequest{Data: time.Now().UnixNano()})
 		if err != nil {
 			log.Fatalf("could not fetch time: %v", err)
 		}

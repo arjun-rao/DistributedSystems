@@ -27,12 +27,12 @@ func main() {
 	counter := 0
 	for {
 
-		time.Sleep(60 * time.Second)
+		time.Sleep(10 * time.Second)
 		now := time.Now()
 		nanos := strconv.FormatInt(now.UnixNano(), 10)
 		data := []byte(nanos)
-		_, err = c.Write(data)
 		sendTime := time.Now().UnixNano()
+		_, err = c.Write(data)
 		fmt.Printf("%s,", strconv.FormatInt(sendTime, 10))
 		counter++
 		if counter == 121 {
