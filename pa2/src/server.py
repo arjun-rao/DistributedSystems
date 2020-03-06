@@ -135,12 +135,11 @@ class UDPServer(Server):
         process = multiprocessing.Process(target=self.handle_client_recv, args=())
         process.daemon = True
         process.start()
-        flag = False
         # Check if there is a message to process:
         while True:
-            if self.to_process and not flag:
-                self.log_info('Received in buffer: {}'.format(self.to_process[0].m_id))
-                flag = True
+            if self.to_process:
+                # There is a message in the to_process buffer.
+                pass
 
 
 
