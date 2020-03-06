@@ -73,8 +73,9 @@ if __name__ == "__main__":
     client = UDPClient(1)
     host = args.host
     port = args.port
+    print("Type 'help' to see possible options")
     while True:
-        msg = input('Enter a message: ')
+        msg = input('> ')
         if msg == 'exit':
             break
         client.sendTo(host, port, msg)
