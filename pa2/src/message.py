@@ -2,11 +2,11 @@
 import json
 
 class Message:
-    def __init__(self, mid: int, data: str, sender: list, gsid=None, sid=None, sender_type=None):
+    def __init__(self, mid: int, data: str, sender: list, gsid=None, sender_id=None, sender_type=None):
         self.gs_id = gsid
         self.m_id = mid
         self.data = data
-        self.sender_id = sid
+        self.sender_id = sender_id
         # can be 'client' or 'server'
         self.sender_type = sender_type
         self.sender = sender
@@ -22,7 +22,9 @@ class Message:
         })
 
     @classmethod
-    def from_string(cls, data):
+    def from_string(cls, data) -> Message:
+        """Creates a new message object initialized with data
+        """
         payload = json.loads(data)
         return Message(
             payload['mid'],

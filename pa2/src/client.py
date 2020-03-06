@@ -3,6 +3,7 @@ import socket
 import argparse
 
 from logger import get_logger
+from message import Message
 
 class Client:
     def __init__(self, cid, logfile='client.log'):
@@ -47,18 +48,20 @@ class UDPClient(Client):
     def process_command(self, host, port, cmd):
         self.sendTo(host, port, '_'.join(cmd))
 
+    def build_message(self, msg):
+        return Message(-1, msg, None, sender_id = self._id, sender_type='client').to_string()
 
     def sendTo(self, host, port, msg):
         """Sends message to server"""
         self.log_info('Sending Message to {}:{}...'.format(host, port))
         try:
             print(msg)
-            message = str.encode(msg)
+            message = str.encode(build_message(msg))
             self.socket.sendto(message, (host, port))
             ## Wait for reply for 2 seconds
             self.socket.settimeout(2)
             msgFromServer = self.socket.recvfrom(self.BUFFERSIZE)
-            self.log_info('Received message from server: {}'.format(msgFromServer[0]))
+            self.log_info('Received message from server: {}'.format(msgFromServer[0].decode()))
         except socket.timeout:
             self.log_debug('No reply received within timeout')
 
