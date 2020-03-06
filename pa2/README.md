@@ -44,7 +44,7 @@ protocol as described below:
 
 ## TODO
 
-- [ ] Create a `FTQueue Class` that has methods for queue operations mentioned above that writes queue to file.
+- [x] Create a `FTQueue Class` that has methods for queue operations mentioned above that writes queue to file.
 - [ ] Create a UDP server that listens for incoming messages for queue operations.
 - [ ] Create a UDP client that can send messages to the server to perform queue operations.
 

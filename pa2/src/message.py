@@ -1,0 +1,1 @@
+# A class for message data
