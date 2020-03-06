@@ -40,23 +40,26 @@ class UDPClient(Client):
         """Binds a UDP socket to the client
         """
         try:
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         except Exception as e:
             self.log_exception('Failed to bind socket')
 
-    def sendTo(self, HOST, PORT, msg):
+    def process_command(self, host, port, cmd):
+        self.sendTo(host, port, '_'.join(cmd))
+
+    def sendTo(self, host, port, msg):
         """Sends message to server"""
-        self.log_info('Sending Message to {}:{}...'.format(HOST, PORT))
+        self.log_info('Sending Message to {}:{}...'.format(host, port))
         try:
+            print(msg)
             message = str.encode(msg)
-            self.socket.sendto(message, (HOST, PORT))
+            self.socket.sendto(message, (host, port))
             ## Wait for reply for 2 seconds
             self.socket.settimeout(2)
             msgFromServer = self.socket.recvfrom(self.BUFFERSIZE)
             self.log_info('Received message from server: {}'.format(msgFromServer[0]))
         except socket.timeout:
-            self.log_exception('Socket timed out...')
-            self.socket.close()
+            self.log_debug('No reply received within timeout')
 
 
 
@@ -75,8 +78,15 @@ if __name__ == "__main__":
     port = args.port
     print("Type 'help' to see possible options")
     while True:
-        msg = input('> ')
-        if msg == 'exit':
+        msg = input('> ').split(' ')
+        if msg[0] == 'exit':
             break
-        client.sendTo(host, port, msg)
+        elif msg[0] =='sethost':
+            # TODO: Validate host string here
+            host = msg[1]
+        elif msg[0] == 'setport':
+            # TODO: Validate port here
+            port = int(msg[1])
+        else:
+            client.process_command(host, port, msg)
 

@@ -12,7 +12,7 @@ class FTQueue:
         if label in self.data:
             return label
         return -1
-        
+
     def qDestroy(self,queue_id: int):
         if self.qId(queue_id) != -1:
             del self.data[queue_id]
@@ -20,7 +20,6 @@ class FTQueue:
         else:
             return -1
 
-    
     def qPush(self, queue_id: int, item: int):
         self.data[queue_id].append(item)
         pass
