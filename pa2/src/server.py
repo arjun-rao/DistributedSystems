@@ -26,7 +26,7 @@ class Server:
         self.logger.exception('SID: {} ({}): {}'.format(self._id, self._address, msg))
 
 class UDPServer(Server):
-    def __init__(self, sid, HOST, PORT):
+    def __init__(self, sid, HOST, PORT, num_servers=1):
         """
         Creates a UDP server on given port and hostname
 
@@ -40,11 +40,15 @@ class UDPServer(Server):
         self._id = sid
         self.counter = 0
         self.BUFFERSIZE = 1024
+        self.GSID = 0
+        # Total number of servers to find out who the responsible server is.
+        self.num_servers = num_servers
 
         # Server's FTQueue
         self.queue = FTQueue()
-        self.manager = multiprocessing.Manager()
+
         # Server's to_process queue holds messages from clients
+        self.manager = multiprocessing.Manager()
         self.to_process = self.manager.list()
 
         self._address = '{}:{}'.format(self.HOST, self.PORT)
@@ -139,6 +143,7 @@ class UDPServer(Server):
         while True:
             if self.to_process:
                 # There is a message in the to_process buffer.
+                # Check if message ID % n + 1 == self.GSID
                 pass
 
 
@@ -152,8 +157,10 @@ if __name__ == "__main__":
                         help="Host Port for server. Default is '8000'.")
     parser.add_argument("--id", type=int, dest="id", default=1,
                         help="Server ID. Default is 1.")
+    parser.add_argument("--n", type=int, dest="N", default=1,
+                        help="Total number of servers. Default is 1.")
     args = parser.parse_args()
 
-    server = UDPServer(args.id, args.host, args.port)
+    server = UDPServer(args.id, args.host, args.port, num_servers=args.N)
     server.listen()
 

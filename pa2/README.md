@@ -51,3 +51,4 @@ protocol as described below:
 
 ## References
 * UDP Client-Server Python - [link](https://tutorialedge.net/python/udp-client-server-python/)
+* Multicast - [link](https://stackoverflow.com/questions/603852/how-do-you-udp-multicast-in-python)
