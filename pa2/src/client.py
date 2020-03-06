@@ -47,6 +47,7 @@ class UDPClient(Client):
     def process_command(self, host, port, cmd):
         self.sendTo(host, port, '_'.join(cmd))
 
+
     def sendTo(self, host, port, msg):
         """Sends message to server"""
         self.log_info('Sending Message to {}:{}...'.format(host, port))

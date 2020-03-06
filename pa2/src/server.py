@@ -109,6 +109,8 @@ class UDPServer(Server):
         self.manager = multiprocessing.Manager()
         self.to_process = self.manager.list()
         self.multicast_buffer = self.manager.list()
+        self.delivered_messages = self.manager.dict()
+        self.to_deliver = self.manager.dict()
 
         self._address = '{}:{}'.format(self.HOST, self.PORT)
         super(UDPServer, self).__init__(self._id, self._address)
@@ -214,7 +216,7 @@ class UDPServer(Server):
         while True:
             try:
                 data, addr = self.client_socket.recvfrom(self.BUFFERSIZE)
-                self.log_info('Received msg: {} from: {}'.format(data, addr))
+                self.log_info('Client Received msg: {} from: {}'.format(data, addr))
                 data = data.decode()
                 # Increment local message counter
                 self.counter += 1
@@ -225,7 +227,7 @@ class UDPServer(Server):
                 msg_str = msg.to_string()
                 self.multicast_socket.sendto(str.encode(msg_str), (MCAST_GRP, MCAST_PORT))
                 # Add to buffer
-                print('MID:', msg.m_id)
+                print('Sending multicast MID:', msg.m_id)
                 self.to_process.append(msg)
 
             except Exception:
@@ -258,12 +260,15 @@ class UDPServer(Server):
         while True:
             try:
                 data, addr = self.multicast_socket.recvfrom(self.BUFFERSIZE)
-                self.log_info('Received msg: {} from: {}'.format(data, addr))
+                self.log_info('Received multicast msg: {} from: {}'.format(data, addr))
                 data = data.decode()
-                msg = Message.from_string(data)
-                # Step 1: Add to buffer
-                print('Multicast MID:', msg.m_id)
-                self.multicast_buffer.append(msg)
+                try:
+                    msg = Message.from_string(data)
+                    # Step 1: Add to buffer
+                    print('Multicast MID:', msg.m_id)
+                    self.multicast_buffer.append(msg)
+                except:
+                    self.log_debug('Failed to decode multicast message: {}'.format(data))
 
             except Exception:
                 self.log_exception('An error occurred while listening for messages...')
@@ -271,9 +276,14 @@ class UDPServer(Server):
     def listen(self):
         """Listens for incoming messages and handles them"""
         # Listen for client requests:
-        process = multiprocessing.Process(target=self.handle_client_recv, args=())
-        process.daemon = True
-        process.start()
+        client_process = multiprocessing.Process(target=self.handle_client_recv, args=())
+        client_process.daemon = True
+        client_process.start()
+
+        # Listen for multicast requests:
+        multicast_process = multiprocessing.Process(target=self.handle_multicast_recv, args=())
+        multicast_process.daemon = True
+        multicast_process.start()
         # Check if there is a message to process:
         process_buffer = False
         multicast_flag = False
@@ -281,8 +291,8 @@ class UDPServer(Server):
             if self.to_process and not process_buffer:
                 # There is a message in the to_process buffer.
                 # Check if message ID % n + 1 == self.GSID
-                print('Client Recv {}', self.to_process[0].m_id)
-                to_process= True
+                print('Client Recv {}'.format(self.to_process[0].m_id))
+                process_buffer= True
             if self.multicast_buffer and not multicast_flag:
                 # There is a message in the to_process buffer.
                 # Check if message ID % n + 1 == self.GSID
