@@ -52,3 +52,5 @@ protocol as described below:
 ## References
 * UDP Client-Server Python - [link](https://tutorialedge.net/python/udp-client-server-python/)
 * Multicast - [link](https://stackoverflow.com/questions/603852/how-do-you-udp-multicast-in-python)
+    * `sudo route add -net 224.0.0.0/5 127.0.0.1`
+    * `sudo route add -net 232.0.0.0/5 192.168.1.3`

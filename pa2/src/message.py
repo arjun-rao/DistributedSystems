@@ -25,3 +25,8 @@ class Message:
         if self.gs_id == None:
             return False
         return True
+
+    def is_responsible(self,server_count,self_number):
+        if self.m_id % server_count == self_number:
+            return True
+        return False

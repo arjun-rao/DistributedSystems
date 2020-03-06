@@ -7,11 +7,62 @@ from logger import get_logger
 import multiprocessing
 from message import Message
 import struct
+import sys
+import re
 
-MCAST_GRP = '228.8.8.8'
+MCAST_GRP = '232.2.2.2'
 MCAST_PORT = 5007
-MCAST_IFACE = '127.0.0.1'
+MCAST_IFACE = '192.168.1.3'
 MULTICAST_TTL = 1
+
+
+
+def ip_is_local(ip_string):
+    """
+    Uses a regex to determine if the input ip is on a local network. Returns a boolean.
+    It's safe here, but never use a regex for IP verification if from a potentially dangerous source.
+    """
+    combined_regex = "(^10\.)|(^172\.1[6-9]\.)|(^172\.2[0-9]\.)|(^172\.3[0-1]\.)|(^192\.168\.)"
+    return re.match(combined_regex, ip_string) is not None # is not None is just a sneaky way of converting to a boolean
+
+
+def get_local_ip():
+    """
+    Returns the first externally facing local IP address that it can find.
+    Even though it's longer, this method is preferable to calling socket.gethostbyname(socket.gethostname()) as
+    socket.gethostbyname() is deprecated. This also can discover multiple available IPs with minor modification.
+    We excludes 127.0.0.1 if possible, because we're looking for real interfaces, not loopback.
+    Some linuxes always returns 127.0.1.1, which we don't match as a local IP when checked with ip_is_local().
+    We then fall back to the uglier method of connecting to another server.
+    """
+
+    # socket.getaddrinfo returns a bunch of info, so we just get the IPs it returns with this list comprehension.
+    local_ips = [ x[4][0] for x in socket.getaddrinfo('localhost', 80)
+                  if ip_is_local(x[4][0]) ]
+
+    # select the first IP, if there is one.
+    local_ip = local_ips[0] if len(local_ips) > 0 else None
+
+    # If the previous method didn't find anything, use this less desirable method that lets your OS figure out which
+    # interface to use.
+    if not local_ip:
+        # create a standard UDP socket ( SOCK_DGRAM is UDP, SOCK_STREAM is TCP )
+        temp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # Open a connection to one of Google's DNS servers. Preferably change this to a server in your control.
+            temp_socket.connect(('8.8.8.8', 9))
+            # Get the interface used by the socket.
+            local_ip = temp_socket.getsockname()[0]
+        except socket.error:
+            # Only return 127.0.0.1 if nothing else has been found.
+            local_ip = "127.0.0.1"
+        finally:
+            # Always dispose of sockets when you're done!
+            temp_socket.close()
+    return local_ip
+
+
+
 
 class Server:
     def __init__(self, sid, address, logfile='server.log'):
@@ -84,13 +135,35 @@ class UDPServer(Server):
             self.log_exception('Failed to bind socket to host')
         # Multicast socket
         try:
-            self.multicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            # create a UDP socket
+            self.multicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+            # allow reuse of addresses
             self.multicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.multicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-            self.multicast_socket.bind((MCAST_GRP, MCAST_PORT))
-            mreq = struct.pack('4s4s', socket.inet_aton(MCAST_GRP), socket.inet_aton(MCAST_IFACE))
-            self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, MULTICAST_TTL)
-            self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+
+            # set multicast interface to local_ip
+            self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(MCAST_IFACE))
+
+            # Set multicast time-to-live to 2...should keep our multicast packets from escaping the local network
+            self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+
+            # Construct a membership request...tells router what multicast group we want to subscribe to
+            membership_request = socket.inet_aton(MCAST_GRP) + socket.inet_aton(MCAST_IFACE)
+
+            # Send add membership request to socket
+            # See http://www.tldp.org/HOWTO/Multicast-HOWTO-6.html for explanation of sockopts
+            self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership_request)
+                # Bind the socket to an interface.
+            # If you bind to a specific interface on the Mac, no multicast data will arrive.
+            # If you try to bind to all interfaces on Windows, no multicast data will arrive.
+            # Hence the following.
+            if sys.platform.startswith("darwin"):
+                self.multicast_socket.bind(('0.0.0.0', MCAST_PORT))
+            else:
+                self.multicast_socket.bind((MCAST_IFACE, MCAST_PORT))
+
+            self.multicast_socket.sendto(str.encode('test'), (MCAST_GRP, MCAST_PORT))
 
         except Exception as e:
             self.log_exception('Failed to bind socket to host')
@@ -208,52 +281,12 @@ class UDPServer(Server):
             if self.to_process and not process_buffer:
                 # There is a message in the to_process buffer.
                 # Check if message ID % n + 1 == self.GSID
-                print('Client Recv {}', self.to_process[0].mid)
+                print('Client Recv {}', self.to_process[0].m_id)
                 to_process= True
             if self.multicast_buffer and not multicast_flag:
                 # There is a message in the to_process buffer.
                 # Check if message ID % n + 1 == self.GSID
-                print('Multicast Recv {}', self.multicast_buffer[0].mid)
-                multicast_flag= True
-                # Check if message ID % n + 1 == self.GSID
-                print('Client Recv {}', self.to_process[0].mid)
-                to_process= True
-            if self.multicast_buffer and not multicast_flag:
-                # There is a message in the to_process buffer.
-                # Check if message ID % n + 1 == self.GSID
-                print('Multicast Recv {}', self.multicast_buffer[0].mid)
-                multicast_flag= True
-                # Check if message ID % n + 1 == self.GSID
-                print('Client Recv {}', self.to_process[0].mid)
-                to_process= True
-            if self.multicast_buffer and not multicast_flag:
-                # There is a message in the to_process buffer.
-                # Check if message ID % n + 1 == self.GSID
-                print('Multicast Recv {}', self.multicast_buffer[0].mid)
-                multicast_flag= True
-                # Check if message ID % n + 1 == self.GSID
-                print('Client Recv {}', self.to_process[0].mid)
-                to_process= True
-            if self.multicast_buffer and not multicast_flag:
-                # There is a message in the to_process buffer.
-                # Check if message ID % n + 1 == self.GSID
-                print('Multicast Recv {}', self.multicast_buffer[0].mid)
-                multicast_flag= True
-                # Check if message ID % n + 1 == self.GSID
-                print('Client Recv {}', self.to_process[0].mid)
-                to_process= True
-            if self.multicast_buffer and not multicast_flag:
-                # There is a message in the to_process buffer.
-                # Check if message ID % n + 1 == self.GSID
-                print('Multicast Recv {}', self.multicast_buffer[0].mid)
-                multicast_flag= True
-                # Check if message ID % n + 1 == self.GSID
-                print('Client Recv {}', self.to_process[0].mid)
-                to_process= True
-            if self.multicast_buffer and not multicast_flag:
-                # There is a message in the to_process buffer.
-                # Check if message ID % n + 1 == self.GSID
-                print('Multicast Recv {}', self.multicast_buffer[0].mid)
+                print('Multicast Recv {}', self.multicast_buffer[0].m_id)
                 multicast_flag= True
 
 
@@ -270,6 +303,12 @@ if __name__ == "__main__":
     parser.add_argument("--n", type=int, dest="N", default=1,
                         help="Total number of servers. Default is 1.")
     args = parser.parse_args()
+    local_ip = get_local_ip()
+    print('localIp: ', local_ip)
+    MCAST_IFACE = local_ip
+    server = UDPServer(args.id, args.host, args.port, num_servers=args.N)
+    server.listen()
+
 
     server = UDPServer(args.id, args.host, args.port, num_servers=args.N)
     server.listen()
