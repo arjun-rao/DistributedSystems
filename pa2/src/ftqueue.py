@@ -1,46 +1,64 @@
 from collections import defaultdict
+from enum import IntEnum, unique
+
+# Error codes for queue errors
+@unique
+class QueueErrors(IntEnum):
+    UNKNOWN = -1
+    QUEUE_NOT_FOUND = -2
+    QUEUE_EMPTY = -3
+
+
 class FTQueue:
-    def __init__(self):
-        self.data = defaultdict(list)
+    def __init__(self, sync_manager):
+        self.manager = sync_manager
+        self.data =  self.manager.dict()
 
     def qCreate(self, label: int) -> int:
         if label not in self.data.keys():
-            self.data[label] = list()
-        return label
+            self.data[label] = self.manager.list()
+        return label, None
 
     def qId(self, label: int) -> int:
         if label in self.data:
-            return label
-        return -1
+            return label, None
+        return -1, QueueErrors.QUEUE_NOT_FOUND
 
     def qDestroy(self,queue_id: int):
         if self.qId(queue_id) != -1:
             del self.data[queue_id]
-            return queue_id
+            return queue_id, None
         else:
-            return -1
+            return None, QueueErrors.QUEUE_NOT_FOUND
 
     def qPush(self, queue_id: int, item: int):
+        if self.qId(queue_id)[0] == -1:
+            self.qCreate(queue_id)
         self.data[queue_id].append(item)
-        pass
+        return None, None
 
     def qPop(self,queue_id: int) -> int:
-        if self.qId(queue_id) != -1:
-            return self.data[queue_id].pop()
-        return -2
+        if self.qId(queue_id)[0] != -1:
+            if self.qSize(queue_id) > 0:
+                return self.data[queue_id].pop(0), None
+            return None, QueueErrors.QUEUE_EMPTY
+        return None, QueueErrors.QUEUE_NOT_FOUND
 
     def qTop(self, queue_id: int) -> int:
-        if self.qId(queue_id) != -1:
-            return self.data[queue_id][0]
-        return -3
+        if self.qId(queue_id)[0] != -1:
+            if self.qSize(queue_id) > 0:
+                return self.data[queue_id][0], None
+            return None, QueueErrors.QUEUE_EMPTY
+        return None, QueueErrors.QUEUE_NOT_FOUND
 
     def qSize(self, queue_id: int) -> int:
-        if self.qId(queue_id) != -1:
-            return len(self.data[queue_id])
-        return -4
+        if self.qId(queue_id)[0] != -1:
+            return len(self.data[queue_id]), None
+        return None, QueueErrors.QUEUE_NOT_FOUND
 
     def qDisplay(self):
-        print(self.data)
+        for item, value in self.data.items():
+            print(item, [x for x in value])
         return
 
 
