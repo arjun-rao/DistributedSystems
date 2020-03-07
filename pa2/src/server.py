@@ -2,13 +2,15 @@
 import socket
 import argparse
 from signal import signal, SIGINT
-from ftqueue import FTQueue
+from ftqueue import FTQueue, QueueErrors
 from logger import get_logger
 import multiprocessing
-from message import Message
+from multiprocessing import SimpleQueue
+from message import Message, MessageType
 import struct
 import sys
 import re
+import time
 
 MCAST_GRP = '232.2.2.2'
 MCAST_PORT = 5007
@@ -61,10 +63,7 @@ def get_local_ip():
             temp_socket.close()
     return local_ip
 
-
-
-
-class Server:
+class BaseServer:
     def __init__(self, sid, address, logfile='server.log'):
         # Server address used for logging
         self._address = address
@@ -78,11 +77,14 @@ class Server:
     def log_debug(self, msg):
         """Log at debug level"""
         self.logger.debug('SID: {} ({}): {}'.format(self._id, self._address, msg))
+    def log_error(self, msg):
+        """Log at debug level"""
+        self.logger.error('SID: {} ({}): {}'.format(self._id, self._address, msg))
     def log_exception(self, msg):
         """Logs an exception"""
         self.logger.exception('SID: {} ({}): {}'.format(self._id, self._address, msg))
 
-class UDPServer(Server):
+class UDPServer(BaseServer):
     def __init__(self, sid, HOST, PORT, num_servers=1):
         """
         Creates a UDP server on given port and hostname
@@ -91,26 +93,27 @@ class UDPServer(Server):
             HOST, str: The host IP to bind the socket to.
             PORT, int: The UDP port to listen on.
         """
-        self.client_socket = None
+        self.unicast_socket = None
         self.multicast_socket = None
         self.HOST = HOST
         self.PORT = PORT
         self._id = sid
-        self.counter = 0
         self.BUFFERSIZE = 1024
-        self.GSID = 0
         # Total number of servers to find out who the responsible server is.
         self.num_servers = num_servers
 
-        # Server's FTQueue
-        self.queue = FTQueue()
-
         self.manager = multiprocessing.Manager()
+
+        # Server's FTQueue
+        self.queue = FTQueue(self.manager)
+
+        self.GSID = multiprocessing.Value('i', 0)
+        self.counter = multiprocessing.Value('i', 0)
         # Server's from_client buffer holds messages from clients as a dict
         # to send reply to client later.
         self.from_client = self.manager.dict()
         # Any message received via multicast from other servers
-        self.multicast_buffer = self.manager.list()
+        self.multicast_buffer = SimpleQueue()
         # nack_buffer stores any messages that are received without sequence number.
         self.nack_buffer = self.manager.list()
         # Messages that this server is responsible for
@@ -124,22 +127,22 @@ class UDPServer(Server):
         self._bind()
 
         # Capture control-C signals
-        def handler(signal_received, frame):
+        def sigint_handler(signal_received, frame):
             # Handle any cleanup here
             print('SIGINT or CTRL-C detected. Exiting gracefully')
-            if self.client_socket is not None:
-                self.client_socket.close()
+            if self.unicast_socket is not None:
+                self.unicast_socket.close()
             if self.multicast_socket is not None:
                 self.multicast_socket.close()
             exit(0)
-        signal(SIGINT, handler)
+        signal(SIGINT, sigint_handler)
 
     def _bind(self):
         """Binds a UDP sockets to the configured hostname and port
         """
         try:
-            self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-            self.client_socket.bind((self.HOST, self.PORT))
+            self.unicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            self.unicast_socket.bind((self.HOST, self.PORT))
         except Exception as e:
             self.log_exception('Failed to bind socket to host')
         # Multicast socket
@@ -186,32 +189,134 @@ class UDPServer(Server):
         command_type = message_parts[0]
         # command_args looks like ['arg1', 'arg2'...]
         command_args = message_parts[1:]
-        if command_type == "create":
-            qid = self.queue.qCreate(int(command_args[0]))
-            return self.make_response(command_type,qid)
-        elif command_type == "delete":
-            qid = self.queue.qDestroy(int(command_args[0]))
-            return self.make_response(command_type,qid)
-        elif command_type == "push":
-            self.queue.qPush(int(command_args[0]),int(command_args[1]))
-            return self.make_response(command_type,int(command_args[0]),int(command_args[1]))
-        elif command_type == "pop":
-            item = self.queue.qPop(int(command_args[0]))
-            print('I am here!!!')
-            return self.make_response(command_type, item)
-        elif command_type == "top":
-            item = self.queue.qTop(int(command_args[0]))
-            return self.make_response(command_type, item)
-        elif command_type == "size":
-            item = self.queue.qSize(int(command_args[0]))
-            return self.make_response(command_type,item)
+        try:
+            if command_type == "create":
+                qid, err = self.queue.qCreate(int(command_args[0]))
+                return self.make_response(command_type,qid, err)
+            elif command_type == "delete":
+                qid, err = self.queue.qDestroy(int(command_args[0]))
+                return self.make_response(command_type,qid, err)
+            elif command_type == "push":
+                _, err = self.queue.qPush(int(command_args[0]),int(command_args[1]))
+                return self.make_response(command_type,int(command_args[0]),int(command_args[1]), err)
+            elif command_type == "pop":
+                item, err = self.queue.qPop(int(command_args[0]))
+                return self.make_response(command_type, item, err)
+            elif command_type == "top":
+                item, err = self.queue.qTop(int(command_args[0]))
+                return self.make_response(command_type, item, err)
+            elif command_type == "size":
+                item, err = self.queue.qSize(int(command_args[0]))
+                return self.make_response(command_type,item, err)
+        except:
+                return self.make_response(command_type, QueueErrors.UNKNOWN)
 
-        #TODO: handle error codes from queue
+    def deliver_message(self, message):
+        """Process this message and send a reply to the client"""
+        if self.GSID.value != message.gs_id:
+            self.log_error('Cannot deliver this message at this time')
+            return
+
+        # Process the message
+        response_data, response_err = self.process_message(message.data)
+
+        self.log_info('Delivered Message: {}'.format(message.m_id))
+
+        # Print the queue to console for debugging
+        self.queue.qDisplay()
+
+        # Update GSID
+        with self.GSID.get_lock():
+            self.GSID.value += 1
+
+        # remove message from NACK_buffer
+        for idx, nack_msg in enumerate(self.nack_buffer):
+            if nack_msg.m_id == message.m_id:
+                self.nack_buffer.pop(idx)
+                self.log_debug('Removed msg({}) from nack_buffer'.format(nack_msg.m_id))
+                break
+
+        # Check if we need to send a reply to the client
+        if message.m_id in self.from_client:
+            original_client_message = self.from_client[message.m_id]
+            client_address = original_client_message.sender
+            # change data to response
+            message.data = response_data
+            message.error = response_err
+            # send reply to client
+            self.unicast_message(message, client_address, MessageType.SERVER_CLIENT_REPLY)
+            # Remove client message from buffer
+            del self.from_client[message.m_id]
+
+        # Check if any other messages can be delivered
+        if self.GSID.value in self.to_deliver:
+            new_message = self.to_deliver[self.GSID.value]
+            del self.to_deliver[self.GSID.value]
+            self.deliver_message(new_message)
+
+    def is_responsible_server(self, msg):
+        """Returns true if this server is responsible for msg"""
+        if ((msg.m_id % self.num_servers) + 1) == self._id:
+            return True
+        return False
+
+    def get_responsible_server(self, msg):
+        """Returns the ID of the responsible server for this message"""
+        return ((msg.m_id % self.num_servers) + 1)
 
     def make_response(self, command_type, *args):
         args = list(map(str, args))
+        err = args[-1]
+        args = args[:-1]
         args.insert(0, command_type)
-        return '_'.join(args)
+        if err:
+            return '_'.join(args), 'error_code: {}'.format(str(err))
+        return '_'.join(args), None
+
+    def handle_client_message(self, msg, sender_address):
+        """Handle messages received by clients"""
+        self.log_info('Client Received msg: {} from: {}'.format(msg.m_id, sender_address))
+        # Increment local message
+        with self.counter.get_lock():
+            self.counter.value += 1
+        # Assign Message ID and sender address
+        msg.m_id = int(f'{self._id}0{self.counter.value}')
+        msg.sender = sender_address
+        # Add message to from_client buffer
+        self.from_client[msg.m_id] = msg
+        # Multicast the message to all servers
+        print('Sending multicast MID:', msg.m_id)
+        self.multicast_message(msg, MessageType.MULTICAST_RAW)
+        # Check if self is responsible for this message
+        if self.is_responsible_server(msg):
+            # Issue global sequence number and multicast it
+            self.handle_raw_multicast_message(msg)
+
+    def handle_raw_multicast_message(self, msg: Message):
+        """Checks if self is responsible, otherwise stores in NACK buffer
+        """
+        if self.is_responsible_server(msg):
+            # Issue the global sequence number to this message and multicast
+            msg.gs_id = self.GSID.value
+            self.log_info('GSID {} Issued to message: {}'.format(self.GSID.value, msg.m_id))
+            self.multicast_message(msg, MessageType.MULTICAST_SEQUENCED)
+            # Deliver the message locally.
+            self.deliver_message(msg)
+        else:
+            # Check for possible duplicates and store message in nack buffer
+            if not any(x for x in self.nack_buffer if x.m_id == msg.m_id):
+                self.log_info('Storing message: {} for future use.'.format(msg.m_id))
+                self.nack_buffer.append(msg)
+
+    def handle_sequenced_multicast_message(self, msg):
+        # if expected GSID and message GSID match, deliver message
+        if msg.gs_id == self.GSID.value:
+            # Deliver the message and update GSID
+            self.deliver_message(msg)
+        elif msg.gs_id > self.GSID.value:
+            # Add message to to_deliver buffer
+            self.to_deliver[msg.gs_id] = msg
+            # TODO: Request retransmission of missed messages
 
     def handle_unicast_recv(self):
         """Reads messages from client, and process:
@@ -222,24 +327,12 @@ class UDPServer(Server):
         self.log_info('Started Deamon Process')
         while True:
             try:
-                data, addr = self.client_socket.recvfrom(self.BUFFERSIZE)
+                data, addr = self.unicast_socket.recvfrom(self.BUFFERSIZE)
                 data = data.decode()
                 msg = Message.from_string(data)
-                if msg.sender_type == 'client':
-                    self.log_info('Client Received msg: {} from: {}'.format(data, addr))
-                    # Increment local message counter
-                    self.counter += 1
-                    # Assign Message ID and sender address
-                    msg.m_id = int(f'{self._id}0{self.counter}')
-                    msg.sender = addr
-                    # Add to buffer
-                    self.from_client[msg.m_id] = msg
-                    # Multicast
-                    multicast_msg = Message(msg.m_id, msg.data, sender=[self.HOST, self.PORT], sender_id=self._id, sender_type='server')
-                    msg_str = msg.to_string()
-                    self.multicast_socket.sendto(str.encode(msg_str), (MCAST_GRP, MCAST_PORT))
-                    print('Sending multicast MID:', msg.m_id)
-
+                if msg.message_type == MessageType.CLIENT_REQUEST:
+                    self.handle_client_message(msg, addr)
+                # TODO: NACK
             except Exception:
                 self.log_exception('An error occurred while listening for messages...')
 
@@ -255,9 +348,9 @@ class UDPServer(Server):
                     2. Multicasts <message_id, message, GSID>
                     3. Updates GSID
                     4. Deliver/process message
-  2.2)Else:
+                 2.2)Else:
                     1. On receiving global sequence ID:
-1. Checks if GSID received matches with expected GSID:
+                        1. Checks if GSID received matches with expected GSID:
                             If True: Updates GSID, removes message from buffer, checks  for other recieved messages to process
                             Else:
                                 Check if missing GSID in toDeliver Buffer
@@ -276,22 +369,47 @@ class UDPServer(Server):
                     # Step 1: Add to buffer
                     if msg.sender_type == "server" and msg.sender_id != self._id:
                         self.log_info('Received Multicast MID: {} from: {}({})'.format(msg.m_id, msg.sender_type, msg.sender_id))
-                        multicast_buffer.append(msg)
+                        self.multicast_buffer.put(msg)
                 except:
                     self.log_debug('Failed to decode multicast message: {}'.format(data))
 
             except Exception:
                 self.log_exception('An error occurred while listening for messages...')
 
-    def multicast_message(self, msg):
+    def unicast_message(self, msg, dest, msg_type):
+        """Send a unicast message to provided destination
+        """
+        try:
+            unicast_msg = Message(
+                msg.m_id, msg.data,
+                sender=[self.HOST, self.PORT],
+                gsid=msg.gs_id,
+                sender_id=self._id,
+                sender_type='server',
+                message_type=msg_type
+            )
+            msg_str = unicast_msg.to_string()
+            self.unicast_socket.sendto(str.encode(msg_str), dest)
+        except:
+            self.log_exception('Failed to send unicast message: {}'.format(msg_str))
+
+
+    def multicast_message(self, msg, msg_type):
         """Send a multicast message
         """
         try:
-            multicast_msg = Message(msg.m_id, msg.data, sender=[self.HOST, self.PORT], sender_id=self._id, sender_type='server')
+            multicast_msg = Message(
+                msg.m_id, msg.data,
+                sender=[self.HOST, self.PORT],
+                gsid=msg.gs_id,
+                sender_id=self._id,
+                sender_type='server',
+                message_type=msg_type
+            )
             msg_str = multicast_msg.to_string()
             self.multicast_socket.sendto(str.encode(msg_str), (MCAST_GRP, MCAST_PORT))
         except:
-            self.log_exception('Failed to multicast message: {'.format(msg_str))
+            self.log_exception('Failed to multicast message: {}'.format(msg_str))
 
     def listen(self):
         """Listens for incoming messages and handles them"""
@@ -306,21 +424,19 @@ class UDPServer(Server):
         multicast_process.start()
 
         while True:
-            if self.multicast_buffer:
+            if not self.multicast_buffer.empty():
                 # There is a message in the multicast buffer.
-                msg = self.multicast_buffer.pop(0)
-                if msg.has_gsid():
-                    if msg.gs_id == self.GSID:
-                        self.GSID+=1
-                        response = self.process_message(msg.data)
-                        #TODO: send response back to client
-                        #TODO: check if any other messages left to be processed
-                    elif msg.gs_id > self.GSID:
-                        #TODO: check if msg exists in to_Deliver
-                        pass
-                else:
-                    pass
-
+                msg = self.multicast_buffer.get()
+                print('Processing multicast msg: {}'.format(msg.m_id))
+                # If receving a sequenced multicast message
+                if msg.has_gsid() and msg.message_type == MessageType.MULTICAST_SEQUENCED:
+                    # Check if we can deliver or buffer it
+                    self.handle_sequenced_multicast_message(msg)
+                elif msg.message_type == MessageType.MULTICAST_RAW:
+                    # Check if self is responsible if so, issue GSID and multicast
+                    # Otherwise, store message in NACK buffer
+                    self.handle_raw_multicast_message(msg)
+            time.sleep(1)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Start a UDP server')

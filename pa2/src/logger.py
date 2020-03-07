@@ -3,7 +3,7 @@ import logging
 def get_logger(verbosity=1, logfile=None, logger_name=None):
     logger = logging.getLogger(logger_name)
     log_level = (3 - verbosity) * 10
-    fmt = '%(asctime)s - %(process)d - %(levelname)s - %(module)s - %(message)s'
+    fmt = '%(asctime)s - {%(filename)s:%(lineno)d} - %(levelname)s - %(module)s - %(message)s'
     formatter = logging.Formatter(fmt)
     logger.setLevel(log_level)
     logger.propagate = False

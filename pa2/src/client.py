@@ -3,9 +3,9 @@ import socket
 import argparse
 
 from logger import get_logger
-from message import Message
+from message import Message, MessageType
 
-class Client:
+class BaseClient:
     def __init__(self, cid, logfile='client.log'):
         # Client address used for logging
         self._id = cid
@@ -22,7 +22,7 @@ class Client:
         """Logs an exception"""
         self.logger.exception('CID: {}: {}'.format(self._id, msg))
 
-class UDPClient(Client):
+class UDPClient(BaseClient):
     def __init__(self, cid):
         """
         Creates a UDP client on given port and hostname
@@ -49,14 +49,22 @@ class UDPClient(Client):
         self.sendTo(host, port, '_'.join(cmd))
 
     def build_message(self, msg):
-        return Message(-1, msg, None, sender_id = self._id, sender_type='client').to_string()
+        return Message(
+            -1,
+            msg,
+            None,
+            sender_id=self._id,
+            sender_type='client',
+            message_type=MessageType.CLIENT_REQUEST,
+            error=None
+        ).to_string()
 
     def sendTo(self, host, port, msg):
         """Sends message to server"""
         self.log_info('Sending Message to {}:{}...'.format(host, port))
         try:
             print(msg)
-            message = str.encode(build_message(msg))
+            message = str.encode(self.build_message(msg))
             self.socket.sendto(message, (host, port))
             ## Wait for reply for 2 seconds
             self.socket.settimeout(2)
@@ -81,10 +89,20 @@ if __name__ == "__main__":
     host = args.host
     port = args.port
     print("Type 'help' to see possible options")
+    helpstr= """
+    Possible commands:
+        * 'sethost <host>' : Sets the hostname to connect to
+        * 'sethost <port>' : Sets the port to connect to
+        * 'create <qid>' : Creates a queue with ID <qid>
+        * 'push <qid> <item>' : Push <item> to a queue with ID <qid>
+        * 'pop <qid> <item>' : Pop the first item from a queue with ID <qid>
+    """
     while True:
         msg = input('> ').split(' ')
         if msg[0] == 'exit':
             break
+        elif msg[0] == 'help':
+            print(helpstr)
         elif msg[0] =='sethost':
             # TODO: Validate host string here
             host = msg[1]
