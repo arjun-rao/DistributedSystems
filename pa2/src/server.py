@@ -108,14 +108,15 @@ class UDPServer(BaseServer):
         self.queue = FTQueue(self.manager)
 
         self.GSID = multiprocessing.Value('i', 0)
+        self.maxGSID = multiprocessing.Value('i', 0)
         self.counter = multiprocessing.Value('i', 0)
         # Server's from_client buffer holds messages from clients as a dict
         # to send reply to client later.
         self.from_client = self.manager.dict()
         # Any message received via multicast from other servers
         self.multicast_buffer = SimpleQueue()
-        # nack_buffer stores any messages that are received without sequence number.
-        self.nack_buffer = self.manager.list()
+        # raw_message_buffer stores any messages that are received without sequence number.
+        self.raw_message_buffer = self.manager.list()
         # Messages that this server is responsible for
         self.delivered_messages = self.manager.dict()
 
@@ -208,8 +209,10 @@ class UDPServer(BaseServer):
             elif command_type == "size":
                 item, err = self.queue.qSize(int(command_args[0]))
                 return self.make_response(command_type,item, err)
-        except:
+        except Exception:
+                self.log_exception('Unknown Error')
                 return self.make_response(command_type, QueueErrors.UNKNOWN)
+        return self.make_response(command_type, QueueErrors.UNKNOWN)
 
     def deliver_message(self, message):
         """Process this message and send a reply to the client"""
@@ -229,11 +232,14 @@ class UDPServer(BaseServer):
         with self.GSID.get_lock():
             self.GSID.value += 1
 
-        # remove message from NACK_buffer
-        for idx, nack_msg in enumerate(self.nack_buffer):
-            if nack_msg.m_id == message.m_id:
-                self.nack_buffer.pop(idx)
-                self.log_debug('Removed msg({}) from nack_buffer'.format(nack_msg.m_id))
+        with self.maxGSID.get_lock():
+            self.maxGSID.value = max(self.maxGSID.value, self.GSID.value)
+
+        # remove message from raw_message_buffer
+        for idx, raw_msg in enumerate(self.raw_message_buffer):
+            if raw_msg.m_id == message.m_id:
+                self.raw_message_buffer.pop(idx)
+                self.log_debug('Removed msg({}) from raw_message_buffer'.format(raw_msg.m_id))
                 break
 
         # Check if we need to send a reply to the client
@@ -242,7 +248,8 @@ class UDPServer(BaseServer):
             client_address = original_client_message.sender
             # change data to response
             message.data = response_data
-            message.error = response_err
+            if response_err is not None:
+                message.error = response_err
             # send reply to client
             self.unicast_message(message, client_address, MessageType.SERVER_CLIENT_REPLY)
             # Remove client message from buffer
@@ -265,13 +272,15 @@ class UDPServer(BaseServer):
         return ((msg.m_id % self.num_servers) + 1)
 
     def make_response(self, command_type, *args):
-        args = list(map(str, args))
-        err = args[-1]
-        args = args[:-1]
-        args.insert(0, command_type)
-        if err:
-            return '_'.join(args), 'error_code: {}'.format(str(err))
-        return '_'.join(args), None
+        params = list(map(str, args))
+        err = params[-1]
+        params.insert(0, command_type)
+        response = '_'.join(params[:-1])
+        if err != 'None':
+            self.log_error('Delivery error: {} ({})'.format(response, str(err)))
+            return response, str(err)
+        self.log_info('Delivery success: {}'.format(response))
+        return  response, None
 
     def handle_client_message(self, msg, sender_address):
         """Handle messages received by clients"""
@@ -292,21 +301,33 @@ class UDPServer(BaseServer):
             # Issue global sequence number and multicast it
             self.handle_raw_multicast_message(msg)
 
+    def request_retransmit_messages(self):
+        # TODO: Request for retransmission
+        self.log_debug('Missing messages from GSID: {} - {}'.format(self.GSID.value, self.maxGSID.value))
+
     def handle_raw_multicast_message(self, msg: Message):
-        """Checks if self is responsible, otherwise stores in NACK buffer
+        """Checks if self is responsible, otherwise stores in raw_message buffer
         """
         if self.is_responsible_server(msg):
-            # Issue the global sequence number to this message and multicast
-            msg.gs_id = self.GSID.value
-            self.log_info('GSID {} Issued to message: {}'.format(self.GSID.value, msg.m_id))
-            self.multicast_message(msg, MessageType.MULTICAST_SEQUENCED)
-            # Deliver the message locally.
-            self.deliver_message(msg)
+            # Check if missing any messages:
+            if self.maxGSID.value != self.GSID.value:
+                # Check for possible duplicates and store message in raw_message buffer
+                if not any(x for x in self.raw_message_buffer if x.m_id == msg.m_id):
+                    self.log_info('Storing message: {} for future use.'.format(msg.m_id))
+                    self.raw_message_buffer.append(msg)
+                self.request_retransmit_messages()
+            else:
+                # Issue the global sequence number to this message and multicast
+                msg.gs_id = self.GSID.value
+                self.log_info('GSID {} Issued to message: {}'.format(self.GSID.value, msg.m_id))
+                self.multicast_message(msg, MessageType.MULTICAST_SEQUENCED)
+                # Deliver the message locally.
+                self.deliver_message(msg)
         else:
-            # Check for possible duplicates and store message in nack buffer
-            if not any(x for x in self.nack_buffer if x.m_id == msg.m_id):
+            # Check for possible duplicates and store message in raw_message buffer
+            if not any(x for x in self.raw_message_buffer if x.m_id == msg.m_id):
                 self.log_info('Storing message: {} for future use.'.format(msg.m_id))
-                self.nack_buffer.append(msg)
+                self.raw_message_buffer.append(msg)
 
     def handle_sequenced_multicast_message(self, msg):
         # if expected GSID and message GSID match, deliver message
@@ -316,7 +337,9 @@ class UDPServer(BaseServer):
         elif msg.gs_id > self.GSID.value:
             # Add message to to_deliver buffer
             self.to_deliver[msg.gs_id] = msg
-            # TODO: Request retransmission of missed messages
+            with self.maxGSID.get_lock():
+                self.maxGSID.value = max(self.maxGSID.value, msg.gs_id)
+            self.request_retransmit_messages()
 
     def handle_unicast_recv(self):
         """Reads messages from client, and process:
@@ -332,7 +355,7 @@ class UDPServer(BaseServer):
                 msg = Message.from_string(data)
                 if msg.message_type == MessageType.CLIENT_REQUEST:
                     self.handle_client_message(msg, addr)
-                # TODO: NACK
+                # TODO: Handle nack response
             except Exception:
                 self.log_exception('An error occurred while listening for messages...')
 
@@ -386,7 +409,8 @@ class UDPServer(BaseServer):
                 gsid=msg.gs_id,
                 sender_id=self._id,
                 sender_type='server',
-                message_type=msg_type
+                message_type=msg_type,
+                error= msg.error
             )
             msg_str = unicast_msg.to_string()
             self.unicast_socket.sendto(str.encode(msg_str), dest)
@@ -404,7 +428,8 @@ class UDPServer(BaseServer):
                 gsid=msg.gs_id,
                 sender_id=self._id,
                 sender_type='server',
-                message_type=msg_type
+                message_type=msg_type,
+                error=msg.error
             )
             msg_str = multicast_msg.to_string()
             self.multicast_socket.sendto(str.encode(msg_str), (MCAST_GRP, MCAST_PORT))
@@ -427,14 +452,14 @@ class UDPServer(BaseServer):
             if not self.multicast_buffer.empty():
                 # There is a message in the multicast buffer.
                 msg = self.multicast_buffer.get()
-                print('Processing multicast msg: {}'.format(msg.m_id))
+                print('Processing multicast msg: self.gsid: {}, msg.ID:{}, msg.GSID: {}'.format(self.GSID.value, msg.m_id, msg.gs_id))
                 # If receving a sequenced multicast message
                 if msg.has_gsid() and msg.message_type == MessageType.MULTICAST_SEQUENCED:
                     # Check if we can deliver or buffer it
                     self.handle_sequenced_multicast_message(msg)
                 elif msg.message_type == MessageType.MULTICAST_RAW:
                     # Check if self is responsible if so, issue GSID and multicast
-                    # Otherwise, store message in NACK buffer
+                    # Otherwise, store message in raw_message buffer
                     self.handle_raw_multicast_message(msg)
             time.sleep(1)
 

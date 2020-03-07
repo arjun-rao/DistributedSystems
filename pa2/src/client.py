@@ -73,7 +73,17 @@ class UDPClient(BaseClient):
         except socket.timeout:
             self.log_debug('No reply received within timeout')
 
-
+    def is_valid(self, cmd):
+        """Returns true if command semantics match expection"""
+        # All commands have cmd, qid as minimum params
+        if len(cmd) < 2:
+            return False
+        valid_ops = ['create', 'size', 'delete', 'pop', 'top', 'size']
+        if cmd[0] in valid_ops and len(cmd) == 2:
+            return True
+        if cmd[0] == 'push' and len(cmd) == 3:
+            return True
+        return False
 
 
 
@@ -109,6 +119,6 @@ if __name__ == "__main__":
         elif msg[0] == 'setport':
             # TODO: Validate port here
             port = int(msg[1])
-        else:
+        elif client.is_valid(msg):
             client.process_command(host, port, msg)
 
