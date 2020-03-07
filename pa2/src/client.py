@@ -101,11 +101,13 @@ if __name__ == "__main__":
     print("Type 'help' to see possible options")
     helpstr= """
     Possible commands:
-        * 'sethost <host>' : Sets the hostname to connect to
-        * 'sethost <port>' : Sets the port to connect to
+        * 'sethost <host>' : Sets the hostname to send messages to (default is 0.0.0.0)
+        * 'setport <port>' : Sets the port to send messages to (default is 8000)
         * 'create <qid>' : Creates a queue with ID <qid>
         * 'push <qid> <item>' : Push <item> to a queue with ID <qid>
         * 'pop <qid> <item>' : Pop the first item from a queue with ID <qid>
+
+    Start by setting the port to use for sending messages to a server listening on that port
     """
     while True:
         msg = input('> ').split(' ')
