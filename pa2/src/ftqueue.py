@@ -39,14 +39,14 @@ class FTQueue:
 
     def qPop(self,queue_id: int) -> int:
         if self.qId(queue_id)[0] != -1:
-            if self.qSize(queue_id) > 0:
+            if self.qSize(queue_id)[0] > 0:
                 return self.data[queue_id].pop(0), None
             return None, QueueErrors.QUEUE_EMPTY
         return None, QueueErrors.QUEUE_NOT_FOUND
 
     def qTop(self, queue_id: int) -> int:
         if self.qId(queue_id)[0] != -1:
-            if self.qSize(queue_id) > 0:
+            if self.qSize(queue_id)[0] > 0:
                 return self.data[queue_id][0], None
             return None, QueueErrors.QUEUE_EMPTY
         return None, QueueErrors.QUEUE_NOT_FOUND
