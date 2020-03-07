@@ -18,7 +18,7 @@ class Message:
     def __init__(self,
                  mid: int,
                  data: str,
-                 sender: list,
+                 sender=(),
                  gsid=None,
                  sender_id=None,
                  sender_type=None,

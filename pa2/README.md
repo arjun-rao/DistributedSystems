@@ -1,5 +1,7 @@
 ## Programming Assignment 2
 
+## Authors: Aditi Prakash (adpr5166), Arjun Rao (arra8056)
+
 The goal of this assignment is to implement a fault-tolerant queue data structure called `FTQueue` that exports the following operations to the clients:
 
 ```
@@ -42,11 +44,32 @@ protocol as described below:
 * Group members deliver messages in the order determined by their global sequence numbers
 
 
-## TODO
+## How to run
 
-- [x] Create a `FTQueue Class` that has methods for queue operations mentioned above that writes queue to file.
-- [ ] Create a UDP server that listens for incoming messages for queue operations.
-- [ ] Create a UDP client that can send messages to the server to perform queue operations.
+1) Decide on number of servers N
+2) Start the N servers on different ports using the following command:
+
+    ```
+    # SID starts from 1 and increments for each additional server. N is the total number of servers
+    python server.py --port 9003 --id <SID> --n <N>
+    ```
+3) Start the client
+
+    ```
+    python client.py
+    ```
+    Type 'help' at the prompt to see instructions for how to use the client.
+
+
+## Current Status
+
+### What works:
+
+* All functionalities expected from Phase 1 works.
+
+### What doesn't work:
+* Number of servers is fixed once you start. Server failures are not handled.
+
 
 
 ## References
