@@ -11,6 +11,8 @@ class MessageType(IntEnum):
     SERVER_NACK = 4
     SERVER_NACK_REPLY = 5
     SERVER_CLIENT_REPLY = 6
+    SERVER_JOIN = 7
+    SERVER_JOIN_ACK = 8
 
 class Message:
     def __init__(self,

@@ -302,7 +302,8 @@ class UDPServer(BaseServer):
             self.handle_raw_multicast_message(msg)
 
     def request_retransmit_messages(self):
-        # TODO: Request for retransmission
+        # TODO: Request for retransmission or deliver any that can be in to_deliver
+
         self.log_debug('Missing messages from GSID: {} - {}'.format(self.GSID.value, self.maxGSID.value))
 
     def handle_raw_multicast_message(self, msg: Message):
@@ -313,7 +314,7 @@ class UDPServer(BaseServer):
             if self.maxGSID.value != self.GSID.value:
                 # Check for possible duplicates and store message in raw_message buffer
                 if not any(x for x in self.raw_message_buffer if x.m_id == msg.m_id):
-                    self.log_info('Storing message: {} for future use.'.format(msg.m_id))
+                    # self.log_info('Storing message: {} for future use.'.format(msg.m_id))
                     self.raw_message_buffer.append(msg)
                 self.request_retransmit_messages()
             else:
@@ -356,6 +357,7 @@ class UDPServer(BaseServer):
                 if msg.message_type == MessageType.CLIENT_REQUEST:
                     self.handle_client_message(msg, addr)
                 # TODO: Handle nack response
+
             except Exception:
                 self.log_exception('An error occurred while listening for messages...')
 
@@ -452,15 +454,18 @@ class UDPServer(BaseServer):
             if not self.multicast_buffer.empty():
                 # There is a message in the multicast buffer.
                 msg = self.multicast_buffer.get()
-                print('Processing multicast msg: self.gsid: {}, msg.ID:{}, msg.GSID: {}'.format(self.GSID.value, msg.m_id, msg.gs_id))
                 # If receving a sequenced multicast message
                 if msg.has_gsid() and msg.message_type == MessageType.MULTICAST_SEQUENCED:
+                    self.log_debug('Processing sequenced multicast msg: self.gsid: {}, msg.ID:{}, msg.GSID: {}'.format(self.GSID.value, msg.m_id, msg.gs_id))
                     # Check if we can deliver or buffer it
                     self.handle_sequenced_multicast_message(msg)
                 elif msg.message_type == MessageType.MULTICAST_RAW:
+                    self.log_debug('Processing raw multicast msg: self.gsid: {}, msg.ID:{}, msg.GSID: {}'.format(self.GSID.value, msg.m_id, msg.gs_id))
                     # Check if self is responsible if so, issue GSID and multicast
                     # Otherwise, store message in raw_message buffer
                     self.handle_raw_multicast_message(msg)
+            if len(self.raw_message_buffer) > 0:
+                self.handle_raw_multicast_message(self.raw_message_buffer.pop(0))
             time.sleep(1)
 
 if __name__ == "__main__":
