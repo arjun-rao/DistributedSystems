@@ -11,13 +11,16 @@ class MessageType(IntEnum):
     SERVER_NACK = 4
     SERVER_NACK_REPLY = 5
     SERVER_CLIENT_REPLY = 6
-    SERVER_JOIN = 7
-    SERVER_JOIN_ACK = 8
+    GROUP_SYNC = 7
+    GROUP_SYNC_ACK = 8
+    GROUP_QUEUE_TX = 9
+    GROUP_TRANSITION = 10
+    GROUP_TRANSITION_ACK = 11
 
 class Message:
     def __init__(self,
-                 mid: int,
-                 data: str,
+                 mid: int = -1,
+                 data: str = '',
                  sender=(),
                  gsid=None,
                  sender_id=None,
@@ -25,8 +28,8 @@ class Message:
                  message_type=MessageType.UNKNOWN,
                  error=None
                  ):
-        self.gs_id = gsid
-        self.m_id = mid
+        self.gsid = gsid
+        self.mid = mid
         self.data = data
         self.message_type = message_type
         self.sender_id = sender_id
@@ -37,10 +40,10 @@ class Message:
 
     def to_string(self):
         return json.dumps({
-            'mid': self.m_id,
+            'mid': self.mid,
             'data': self.data,
             'sender': self.sender,
-            'gsid': self.gs_id,
+            'gsid': self.gsid,
             'sender_id': self.sender_id,
             'sender_type': self.sender_type,
             'message_type': self.message_type,
@@ -64,6 +67,6 @@ class Message:
         )
 
     def has_gsid(self):
-        if self.gs_id == None:
+        if self.gsid == None:
             return False
         return True
