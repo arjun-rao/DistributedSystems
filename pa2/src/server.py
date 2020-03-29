@@ -464,10 +464,10 @@ class UDPServer(BaseServer):
         unicast_process.daemon = True
         unicast_process.start()
 
-        # # Initiate Join Group Sequence
-        # group_sync_process = multiprocessing.Process(target=self.handle_group_sync, args=())
-        # group_sync_process.daemon = True
-        # group_sync_process.start()
+        # Initiate Join Group Sequence
+        group_sync_process = multiprocessing.Process(target=self.handle_group_sync, args=())
+        group_sync_process.daemon = True
+        group_sync_process.start()
 
 
         # Listen for multicast requests:
@@ -475,8 +475,8 @@ class UDPServer(BaseServer):
         multicast_process.daemon = True
         multicast_process.start()
 
-        # with self.config_mode.get_lock():
-        #     self.config_mode.value = ConfigStage.INIT
+        with self.config_mode.get_lock():
+            self.config_mode.value = ConfigStage.INIT
 
         self.multicast_socket.sendto(str.encode('test'), (MCAST_GRP, MCAST_PORT))
 

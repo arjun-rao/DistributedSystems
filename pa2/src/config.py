@@ -12,12 +12,12 @@ class ConfigStage(IntEnum):
 class Config:
     def __init__(self, sync_manager, server_id):
         self.manager = sync_manager
-        self.member_count = self.manager.Value('i', 2)
+        self.member_count = self.manager.Value('i', 0)
         self.view_server = self.manager.dict()
         self.server_view = self.manager.dict()
         # server data is of the form {addr: (HOST, PORT), gsid: int}
         self.server_data = self.manager.dict()
-        self.view_id = self.manager.Value('i', server_id)
+        self.view_id = self.manager.Value('i', -1)
         self.server_id = self.manager.Value('i', server_id)
 
 
