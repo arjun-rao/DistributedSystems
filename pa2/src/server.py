@@ -12,7 +12,7 @@ import sys
 import re
 import time
 
-MCAST_GRP = '232.2.2.2'
+MCAST_GRP = '224.1.1.1'
 MCAST_PORT = 5007
 MCAST_IFACE = '192.168.1.3'
 MULTICAST_TTL = 1
@@ -153,31 +153,38 @@ class UDPServer(BaseServer):
             self.multicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
             # allow reuse of addresses
-            self.multicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if sys.platform.startswith('darwin'):
+                self.multicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.multicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
 
-            # set multicast interface to local_ip
-            self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(MCAST_IFACE))
+            # # set multicast interface to local_ip
+            # self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(MCAST_IFACE))
 
-            # Set multicast time-to-live to 2...should keep our multicast packets from escaping the local network
-            self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+            # # Set multicast time-to-live to 2...should keep our multicast packets from escaping the local network
+            # self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
 
             # Construct a membership request...tells router what multicast group we want to subscribe to
             membership_request = socket.inet_aton(MCAST_GRP) + socket.inet_aton(MCAST_IFACE)
 
+
             # Send add membership request to socket
             # See http://www.tldp.org/HOWTO/Multicast-HOWTO-6.html for explanation of sockopts
-            self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership_request)
+            # self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, str(membership_request))
+            mreq = struct.pack('4sl', socket.inet_aton(MCAST_GRP), socket.INADDR_ANY)
+            self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
                 # Bind the socket to an interface.
             # If you bind to a specific interface on the Mac, no multicast data will arrive.
             # If you try to bind to all interfaces on Windows, no multicast data will arrive.
             # Hence the following.
-            if sys.platform.startswith("darwin"):
-                self.multicast_socket.bind(('0.0.0.0', MCAST_PORT))
-            else:
-                self.multicast_socket.bind((MCAST_IFACE, MCAST_PORT))
 
-            self.multicast_socket.sendto(str.encode('test'), (MCAST_GRP, MCAST_PORT))
+            self.multicast_socket.bind(("", MCAST_PORT))
+
+            # if self._id == 1:
+            #     while True:
+            #         self.multicast_socket.sendto(str.encode('test'), (MCAST_GRP, MCAST_PORT))
+            # else:
+            #     while True:
+            #         print(self.multicast_socket.recv(10240))
 
         except Exception as e:
             self.log_exception('Failed to bind socket to host')
