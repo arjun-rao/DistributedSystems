@@ -15,11 +15,9 @@ from message import Message, MessageType
 from config import Config, ConfigStage
 
 
-# MCAST_GRP = '232.2.2.3'
-MCAST_GRP = '224.2.2.3'
-MCAST_PORT = 6001
-# MCAST_IFACE = '192.168.1.3'
-MCAST_IFACE = '127.0.0.1'
+MCAST_GRP = '224.1.1.1'
+MCAST_PORT = 5007
+MCAST_IFACE = '192.168.1.3'
 MULTICAST_TTL = 1
 
 
@@ -162,28 +160,38 @@ class UDPServer(BaseServer):
             self.multicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
             # allow reuse of addresses
-
-            # if sys.platform.startswith("darwin"):
-            self.multicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
+            if sys.platform.startswith('darwin'):
+                self.multicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.multicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
 
-            # set multicast interface to local_ip
-            self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(MCAST_IFACE))
+            # # set multicast interface to local_ip
+            # self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(MCAST_IFACE))
 
-            # Set multicast time-to-live to 2...should keep our multicast packets from escaping the local network
-            self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+            # # Set multicast time-to-live to 2...should keep our multicast packets from escaping the local network
+            # self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
 
             # Construct a membership request...tells router what multicast group we want to subscribe to
             membership_request = socket.inet_aton(MCAST_GRP) + socket.inet_aton(MCAST_IFACE)
 
+
             # Send add membership request to socket
             # See http://www.tldp.org/HOWTO/Multicast-HOWTO-6.html for explanation of sockopts
-            self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership_request)
+            # self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, str(membership_request))
+            mreq = struct.pack('4sl', socket.inet_aton(MCAST_GRP), socket.INADDR_ANY)
+            self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
                 # Bind the socket to an interface.
+            # If you bind to a specific interface on the Mac, no multicast data will arrive.
+            # If you try to bind to all interfaces on Windows, no multicast data will arrive.
+            # Hence the following.
 
-            self.multicast_socket.bind(('0.0.0.0', MCAST_PORT))
-            self.multicast_socket.sendto(str.encode('test'), (MCAST_GRP, MCAST_PORT))
+            self.multicast_socket.bind(("", MCAST_PORT))
+
+            # if self._id == 1:
+            #     while True:
+            #         self.multicast_socket.sendto(str.encode('test'), (MCAST_GRP, MCAST_PORT))
+            # else:
+            #     while True:
+            #         print(self.multicast_socket.recv(10240))
 
         except Exception as e:
             self.log_exception('Failed to bind socket to host')
@@ -677,6 +685,37 @@ class UDPServer(BaseServer):
 
 
 
+        while True:
+            if not self.multicast_buffer.empty():
+                # There is a message in the multicast buffer.
+                msg = self.multicast_buffer.get()
+                self.log_info('Found multicast message: {}'.format(msg.to_string()))
+                # If receving a sequenced multicast message
+                if msg.has_gsid() and msg.message_type == MessageType.MULTICAST_SEQUENCED:
+                    self.log_debug('Processing sequenced multicast msg: self.gsid: {}, msg.ID:{}, msg.GSID: {}'.format(self.GSID.value, msg.m_id, msg.gs_id))
+                    # Check if we can deliver or buffer it
+                    self.handle_sequenced_multicast_message(msg)
+                elif msg.message_type == MessageType.MULTICAST_RAW:
+                    self.log_debug('Processing raw multicast msg: self.gsid: {}, msg.ID:{}, msg.GSID: {}'.format(self.GSID.value, msg.m_id, msg.gs_id))
+                    # Check if self is responsible if so, issue GSID and multicast
+                    # Otherwise, store message in raw_message buffer
+                    self.handle_raw_multicast_message(msg)
+                elif msg.message_type == MessageType.SERVER_NACK:
+                    # Send the previously sequenced message to server who sent NACK
+                    gsid = int(msg.data)
+                    self.log_debug('Received NACK request for {}'.format(gsid))
+                    if gsid in self.delivered_messages:
+                        send_msg = self.delivered_messages[gsid]
+                        self.log_debug('Sending NACK reply for {}'.format(gsid))
+                        self.unicast_message(send_msg, msg.sender, MessageType.SERVER_NACK_REPLY)
+            if len(self.raw_message_buffer) > 0:
+                top_message = self.raw_message_buffer[0]
+                if self.get_responsible_server(top_message) == self._id \
+                        and self.GSID.value == self.maxGSID.value:
+                    # Re-Sequence a message from buffer
+                    self.log_debug('Re-sequencing message: {}', top_message.m_id)
+                    self.handle_raw_multicast_message(self.raw_message_buffer.pop(0))
+            time.sleep(1)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Start a UDP server')
