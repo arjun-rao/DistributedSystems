@@ -12,12 +12,12 @@ class ConfigStage(IntEnum):
 class Config:
     def __init__(self, sync_manager, server_id):
         self.manager = sync_manager
-        self.member_count = self.manager.Value('i', 0)
+        self.member_count = self.manager.Value('i', 2)
         self.view_server = self.manager.dict()
         self.server_view = self.manager.dict()
         # server data is of the form {addr: (HOST, PORT), gsid: int}
         self.server_data = self.manager.dict()
-        self.view_id = self.manager.Value('i', -1)
+        self.view_id = self.manager.Value('i', server_id)
         self.server_id = self.manager.Value('i', server_id)
 
 
@@ -47,9 +47,7 @@ class Config:
         self.server_data[server_id] = {'addr': unicast_addr, 'gsid': gsid}
 
     def reset_gsid(self):
-        for key in self.server_data:
-            if self.server_data[key] != self.server_id:
-                self.server_data[key]['gsid'] = -1
+        self.server_data = self.manager.dict()
 
     def get_max_gsid(self):
         max_gsid = -1
@@ -61,7 +59,7 @@ class Config:
     def compute_view_id(self):
         """Returns calculated view id
         """
-        view_id = sorted(self.server_data.keys()).index(self.server_id)
+        view_id = sorted(self.server_data.keys()).index(self.server_id.get())
         return view_id
 
     def can_transition(self):
@@ -72,18 +70,27 @@ class Config:
                 break
         return transition_flag
 
+    def can_transition_to_stable(self):
+        expected_count = self.member_count.get()
+        for key in self.server_data:
+            if 'member_count' not in self.server_data[key]:
+                return False
+            if self.server_data[key]['member_count'] != expected_count:
+                return False
+        return True
+
     def is_leader(self):
-        if self.server_id ==  max(self.server_data):
+        if self.server_id.get() ==  max(self.server_data):
             return True
         return False
 
     def get_responsible_server(self, msg):
         """Returns the View ID of the responsible server for this message"""
-        return (msg.m_id % self.member_count)
+        return (msg.m_id % self.member_count.get())
 
     def is_responsible_server(self, msg):
         """Returns true if this server is responsible for msg"""
-        if (msg.mid % self.member_count) == self.view_id:
+        if (msg.mid % self.member_count.get()) == self.view_id.get():
             return True
         return False
 

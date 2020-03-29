@@ -15,9 +15,11 @@ from message import Message, MessageType
 from config import Config, ConfigStage
 
 
-MCAST_GRP = '232.2.2.2'
-MCAST_PORT = 5007
-MCAST_IFACE = '192.168.1.3'
+# MCAST_GRP = '232.2.2.3'
+MCAST_GRP = '224.2.2.3'
+MCAST_PORT = 6001
+# MCAST_IFACE = '192.168.1.3'
+MCAST_IFACE = '127.0.0.1'
 MULTICAST_TTL = 1
 
 
@@ -116,6 +118,8 @@ class UDPServer(BaseServer):
         self.from_client = self.manager.dict()
         # Any message received via multicast from other servers
         self.multicast_buffer = SimpleQueue()
+        # Any message received from clients that have not been processed.
+        self.raw_client_buffer = SimpleQueue()
         # raw_message_buffer stores any messages that are received without sequence number.
         self.raw_message_buffer = self.manager.list()
         # Messages that this server is responsible for
@@ -159,8 +163,8 @@ class UDPServer(BaseServer):
 
             # allow reuse of addresses
 
-            if sys.platform.startswith("darwin"):
-                self.multicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # if sys.platform.startswith("darwin"):
+            self.multicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
             self.multicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
 
@@ -179,6 +183,7 @@ class UDPServer(BaseServer):
                 # Bind the socket to an interface.
 
             self.multicast_socket.bind(('0.0.0.0', MCAST_PORT))
+            self.multicast_socket.sendto(str.encode('test'), (MCAST_GRP, MCAST_PORT))
 
         except Exception as e:
             self.log_exception('Failed to bind socket to host')
@@ -282,15 +287,14 @@ class UDPServer(BaseServer):
         self.log_info('Delivery success: {}'.format(response))
         return  response, None
 
-    def handle_client_message(self, msg, sender_address):
+    def handle_client_message(self, msg):
         """Handle messages received by clients"""
-        self.log_info('Client Received msg: {} from: {}'.format(msg.mid, sender_address))
+        self.log_info('Client Received msg: {} from: {}'.format(msg.mid, msg.sender))
         # Increment local message
         with self.counter.get_lock():
             self.counter.value += 1
         # Assign Message ID and sender address
         msg.mid = int(f'{self._id}0{self.counter.value}')
-        msg.sender = sender_address
         # Add message to from_client buffer
         self.from_client[msg.mid] = msg
         # Multicast the message to all servers
@@ -301,8 +305,8 @@ class UDPServer(BaseServer):
             # Issue global sequence number and multicast it
             self.handle_raw_multicast_message(msg)
 
-    def request_retransmit_messages(self):
-        # Request for retransmission s
+    def request_retransmit_messages(self, is_config_mode=False):
+        # Request for retransmissions
         for gsid in range(self.GSID.value, self.maxGSID.value + 1):
             if gsid not in self.to_deliver:
                 msg = Message(
@@ -310,7 +314,10 @@ class UDPServer(BaseServer):
                     data=self.GSID.value,
                 )
                 self.log_info('NACK for GSID: {}'.format(gsid))
-                self.multicast_message(msg, MessageType.SERVER_NACK)
+                if is_config_mode:
+                    self.multicast_message(msg, MessageType.SERVER_NACK, sender_type='config')
+                else:
+                    self.multicast_message(msg, MessageType.SERVER_NACK, sender_type='server')
 
     def handle_raw_multicast_message(self, msg: Message):
         """Checks if self is responsible, otherwise stores in raw_message buffer
@@ -364,44 +371,33 @@ class UDPServer(BaseServer):
                 msg = Message.from_string(data)
                 if msg.sender_type == "config":
                     self.config_msg_buffer.put(msg)
+                    return
                 if msg.message_type == MessageType.CLIENT_REQUEST:
-                    self.handle_client_message(msg, addr)
+                    msg.sender = addr
+                    self.raw_client_buffer.put(msg)
                 elif msg.message_type == MessageType.SERVER_NACK_REPLY:
                     # Handle message received from NACK
                     self.handle_sequenced_multicast_message(msg)
+
 
             except Exception:
                 self.log_exception('An error occurred while listening for messages...')
 
     def handle_multicast_recv(self):
         """Reads messages from muticast port, and process:
-            1)Stores in buffer
-            1.1) Check if message recieved has a GSID
-            If GSID: go to 2.2.1
-            If no GSID:
-            2) Checks if it is the responsible server by message_id % n
-                2.1)If it is responsible server:
-                    1. Assigns a GSID to the message
-                    2. Multicasts <message_id, message, GSID>
-                    3. Updates GSID
-                    4. Deliver/process message
-                 2.2)Else:
-                    1. On receiving global sequence ID:
-                        1. Checks if GSID received matches with expected GSID:
-                            If True: Updates GSID, removes message from buffer, checks  for other recieved messages to process
-                            Else:
-                                Check if missing GSID in toDeliver Buffer
-                                If not in buffer: Adds message with GSID to toDeliver buffer,
-                                    contacts responsible server for missed message
-                                    On recieving missed message, go to 2.1.1
-                                If in buffer: go to 2.2.1.1
         """
         self.log_info('Listening for messages...')
-        while True and self.config_mode == 0:
+        while True:
             try:
-                data, addr = self.multicast_socket.recvfrom(self.BUFFERSIZE)
-                self._process_multicast_recv(data, addr)
-
+                if self.config_mode.value == ConfigStage.STABLE:
+                    try:
+                        self.multicast_socket.settimeout(None)
+                        self.log_info('Waiting for new messages... {}'.format(self.multicast_socket))
+                        data, addr = self.multicast_socket.recvfrom(self.BUFFERSIZE)
+                        self.log_info('MulticastMsg: {}'.format(data.decode()))
+                        self._process_multicast_recv(data, addr)
+                    except socket.timeout:
+                        self.log_info('No new messages...')
             except Exception:
                 self.log_exception('An error occurred while listening for messages...')
 
@@ -411,12 +407,15 @@ class UDPServer(BaseServer):
         try:
             data = data.decode()
             msg = Message.from_string(data)
-            # TODO: If msg.sender_type is 'config' put message in config buffer
-            if msg.sender_type == "config":
+            self.log_info('Received Multicast Message: {}'.format(data))
+            if msg.sender_type == "config" and msg.sender_id != self._id:
+                if msg.message_type == MessageType.GROUP_SYNC:
+                    with self.config_mode.get_lock():
+                        self.config_mode.value = ConfigStage.WAIT_FOR_ACK
                 self.config_msg_buffer.put(msg)
+                return
             # Step 1: Add to  buffer
             if msg.sender_type == "server" and msg.sender_id != self._id:
-                self.log_info('Received {} MID: {} from: {}({})'.format(str(msg.message_type), msg.mid, msg.sender_type, msg.sender_id))
                 self.multicast_buffer.put(msg)
         except:
             self.log_info('Failed to decode multicast message: {}'.format(data))
@@ -465,15 +464,21 @@ class UDPServer(BaseServer):
         unicast_process.daemon = True
         unicast_process.start()
 
+        # # Initiate Join Group Sequence
+        # group_sync_process = multiprocessing.Process(target=self.handle_group_sync, args=())
+        # group_sync_process.daemon = True
+        # group_sync_process.start()
+
+
         # Listen for multicast requests:
         multicast_process = multiprocessing.Process(target=self.handle_multicast_recv, args=())
         multicast_process.daemon = True
         multicast_process.start()
 
-        # Initiate Join Group Sequence
-        group_sync_process = multiprocessing.Process(target=self.handle_group_sync, args=())
-        group_sync_process.daemon = True
-        group_sync_process.start()
+        # with self.config_mode.get_lock():
+        #     self.config_mode.value = ConfigStage.INIT
+
+        self.multicast_socket.sendto(str.encode('test'), (MCAST_GRP, MCAST_PORT))
 
         while True:
             if self.config_mode.value != ConfigStage.STABLE:
@@ -482,27 +487,73 @@ class UDPServer(BaseServer):
                 #   1) Switch to config mode
                 #   2) multicast GROUP_SYNC_ACK with current GSID
                 #   3) add sending server to config
-                if not self.config_buffer.empty():
-                    config_msg = self.config_buffer.get()
+                if not self.config_msg_buffer.empty():
+                    config_msg = self.config_msg_buffer.get()
                     if config_msg.message_type == MessageType.GROUP_SYNC:
                         with self.config_mode.get_lock():
                             self.config_mode.value = ConfigStage.WAIT_FOR_ACK
                         self.config.reset_gsid()
-                        msg = Message(
-                            mid = -1,
-                            gsid = self.GSID.value,
-                        )
-                        self.multicast_message(msg, MessageType.GROUP_SYNC_ACK, sender_type="config")
+                        self.send_group_sync_ack(MessageType.GROUP_SYNC_ACK)
                         self.config.add_server(config_msg.sender_id, config_msg.gsid,config_msg.sender)
 
-                    elif config_msg.message_type == MessageType.GROUP_SYNC_ACK and self.config_mode.value == ConfigStage.WAIT_FOR_ACK:
-                        # TODO: add to server data, and continue waiting
-                        # Also check if self.server.gsid != max_gsid:
-                        # unlock config_mode, process from msg_buffer
+                    elif config_msg.message_type == MessageType.GROUP_SYNC_ACK and \
+                        self.config_mode.value == ConfigStage.WAIT_FOR_ACK:
+                        if self.maxGSID.value < config_msg.gsid:
+                            with self.maxGSID.get_lock():
+                                self.maxGSID.value = max(self.maxGSID.value, config_msg.gsid)
                         self.config.add_server(config_msg.sender_id, config_msg.gsid, config_msg.sender)
+                        if self.GSID.value < self.maxGSID.value:
+                            self.request_retransmit_messages(is_config_mode=True)
+
+                    elif config_msg.message_type == MessageType.GROUP_TRANSITION and \
+                            self.config_mode.value == ConfigStage.WAIT_FOR_TRANSITION:
+                        # compute new view id
+                        self.config.view_id.set(self.config.compute_view_id())
+                        # adding its own data to view
+                        self.config.add_member(self._id,(self.HOST,self.PORT), self.GSID.value, self.config.view_id.get())
+                        # adding sender's data
+                        self.config.add_member(config_msg.sender_id,config_msg.sender, config_msg.gsid, int(config_msg.data))
+                        self.config.server_data[self._id]['member_count'] = self.config.member_count.get()
+                        # Acknowledge the message
+                        self.send_group_sync_ack(MessageType.GROUP_TRANSITION_ACK)
+
+                    elif config_msg.message_type == MessageType.GROUP_TRANSITION_ACK and \
+                            self.config_mode.value == ConfigStage.WAIT_FOR_TRANSITION:
+                        # adding sender's data
+                        sender_view_id = int(config_msg.data[0])
+                        sender_member_count = int(config_msg.data[1])
+                        self.config.add_member(config_msg.sender_id,config_msg.sender, config_msg.gsid, sender_view_id)
+                        self.config.server_data[config_msg.sender_id]['member_count'] = sender_member_count
+                        # Update member count.
+                        self.config.sender_data[self._id]['member_count'] = self.config.member_count.get()
+
+                        # Transition to stable state when we have received everyone's member counts and they are equal.
+                        if self.config.can_transition_to_stable():
+                            with self.config_mode.get_lock():
+                                self.config_mode.value = ConfigStage.STABLE
+                            self.log_info('Transitioned to Stable, View id set to: {}, members: {}'.format(self.config.view_id.get(), self.config.member_count.get()))
+
+                    elif config_msg.message_type == MessageType.SERVER_NACK:
+                        # Send the previously sequenced message to server who sent NACK
+                        gsid = int(config_msg.data)
+                        self.log_info('Received NACK request for {}'.format(gsid))
+                        if gsid in self.delivered_messages:
+                            send_msg = self.delivered_messages[gsid]
+                            self.log_info('Sending NACK reply for {}'.format(gsid))
+                            self.unicast_message(send_msg, config_msg.sender, MessageType.SERVER_NACK_REPLY, sender_type='config')
+                    elif config_msg.message_type == MessageType.SERVER_NACK_REPLY  and \
+                        self.config_mode.value == ConfigStage.WAIT_FOR_ACK:
+                        self.handle_sequenced_multicast_message(config_msg)
+                        self.send_group_sync_ack(MessageType.GROUP_SYNC_ACK)
 
             elif self.config_mode.value == ConfigStage.STABLE:
-                # Process regular message
+                if not self.raw_client_buffer.empty():
+                    # There is a message in the client buffer.
+                    msg = self.raw_client_buffer.get()
+                    self.log_info('Found client message: {}'.format(msg.to_string()))
+                    self.handle_client_message(msg)
+
+                # Process multicast message
                 if not self.multicast_buffer.empty():
                     # There is a message in the multicast buffer.
                     msg = self.multicast_buffer.get()
@@ -527,7 +578,7 @@ class UDPServer(BaseServer):
                             self.unicast_message(send_msg, msg.sender, MessageType.SERVER_NACK_REPLY)
                 if len(self.raw_message_buffer) > 0:
                     top_message = self.raw_message_buffer[0]
-                    if self.get_responsible_server(top_message) == self.config.view_id \
+                    if self.get_responsible_server(top_message) == self.config.view_id.get() \
                             and self.GSID.value == self.maxGSID.value:
                         # Re-Sequence a message from buffer
                         self.log_info('Re-sequencing message: {}', top_message.mid)
@@ -535,29 +586,6 @@ class UDPServer(BaseServer):
             time.sleep(1)
 
     def handle_group_sync(self):
-        # TODO:
-            # Start timer(3s) until msgs recieved from all servers in group
-            # Update serverid_dict: {server_id : gs_id}
-            # When timer runs out, check if gsids of all servers in serverid_dict == max_gsid:
-                #if True:
-                    #unlockconfig_mode and transition to next group config
-                #if False:
-                    # if responsible server:
-                    # unlock config_mode, process from buffer
-                    # for every update of gsid, multicast gsid to all servers
-                    #else:
-                        #every server updates the gsid of the respective sender on recieving gsid
-                    #continues until gsid ==  max_gsid or until timer expires
-                    #timer reset on every new message that is recieved
-
-                    #if timer-expires and gsid!=max_gsid for all servers:
-                        #server with highest server_id starts group_sync again
-                    #else:
-                    #-transition to new state-
-                    #leader: server with highest server-id
-                    #leader multicasts a GROUP-TRANSITION msg
-                    #everyone calculates their own view-id and multicasts it
-                    #update view-id of all servers n recieving view-ids
         """Handles Group Synchronization
         """
         while True:
@@ -573,48 +601,47 @@ class UDPServer(BaseServer):
                 with self.config_mode.get_lock():
                     self.config_mode.value = ConfigStage.WAIT_FOR_ACK
                     continue
-            elif self.config_mode.value == ConfigStage.WAIT_FOR_ACK:
+            elif self.config_mode.value in [ConfigStage.WAIT_FOR_ACK, ConfigStage.WAIT_FOR_TRANSITION]:
                 retry_limit = 1
                 reply_count = 0
-                # TODO: Keep listening for GROUP SYNC ACKs until 3 seconds of no messages occurs.
-                while retry_limit < 3 and self.config_mode.value == ConfigStage.WAIT_FOR_ACK:
+
+                while retry_limit < 3 and self.config_mode.value in [ConfigStage.WAIT_FOR_ACK, ConfigStage.WAIT_FOR_TRANSITION]:
                     try:
                         ## Wait for reply for 3 seconds to 6 seconds
                         self.multicast_socket.settimeout(3 * retry_limit)
+                        self.log_info('Waiting.... {}'.format(self.multicast_socket))
                         data, addr = self.multicast_socket.recvfrom(self.BUFFERSIZE)
+                        self.log_info('MulticastMsg: {}'.format(data.decode()))
                         reply_count += 1
                         self._process_multicast_recv(data, addr)
                     except socket.timeout:
                         retry_limit += 1
                         if reply_count == 0:
                             self.log_info('No reply received within timeout... retrying..')
+                            self.send_group_sync_ack(MessageType.GROUP_SYNC_ACK)
 
+                self.multicast_socket.settimeout(None)
                 if retry_limit >= 3 and reply_count == 0:
                     self.log_info('No reply received within timeout... Assuming sole server')
                     self.config.view_id.set(self.config.compute_view_id())
-                    view_id = self.config.add_member(self._id,(self.HOST,self.PORT), self.GSID.value, self.config.view_id.value)
-                    self.log_info('View id set to: {}'.format(view_id))
+                    view_id = self.config.add_member(self._id,(self.HOST,self.PORT), self.GSID.value, self.config.view_id.get())
                     with self.config_mode.get_lock():
                         self.config_mode.value = ConfigStage.STABLE
-                    break
+                        self.log_info('View id set to: {}'.format(view_id))
+                        self.multicast_socket.settimeout(None)
+                    continue
 
 
                 # timer Runs out and you are in WAIT_FOR_ACK mode and have received some replies.
                 if not config.can_transition():
-                    # TODO:if self.server.gsid != max_gsid:
-                    # unlock config_mode, process from msg_buffer
-                    # for every update of gsid, multicast gsid to all servers
-                    #else:
-                        #every server updates the gsid of the respective sender on recieving gsid
-                    #continues until gsid ==  max_gsid or until timer expires
+                    max_gsid = self.config.get_max_gsid()
                     #timer reset on every new message that is recieved
-                    if self.GSID.value != self.config.get_max_gsid():
-                        #TODO: process messages currently in buffer
-                        msg = Message(
-                            mid=-1,
-                            gsid=self.GSID.value,
-                        )
-                        self.multicast_message(msg,MessageType.GROUP_SYNC_ACK, sender_type="config")
+                    if self.GSID.value < max_gsid:
+                        with self.maxGSID.get_lock():
+                            self.maxGSID.value = max(self.maxGSID.value, max_gsid)
+                        # process messages currently in buffer
+                        self.request_retransmit_messages(is_config_mode=True)
+                        self.send_group_sync_ack(MessageType.GROUP_SYNC_ACK)
 
                 else:
                     # When timer runs out and we can transition
@@ -625,16 +652,44 @@ class UDPServer(BaseServer):
                     #check if it is the leader
                     if self.config.is_leader():
                         self.config.view_id.set(self.config.compute_view_id())
-                        self.config.add_member(self._id, (self.HOST,self.PORT), self.GSID.value, self.config.view_id.value)
+                        self.config.add_member(self._id, (self.HOST,self.PORT), self.GSID.value, self.config.view_id.get())
+                        self.config.server_data[self._id]['member_count'] = self.config.member_count.get()
                         msg = Message(
                             mid=-1,
-                            data=self.config.view_id,
+                            data=self.config.view_id.get(),
                             gsid=self.GSID.value,
                         )
-                        self.multicast_message(msg,MessageType.GROUP_TRANSITION,sender_type="config")
+                        self.multicast_message(msg,MessageType.GROUP_TRANSITION, sender_type="config")
+
+    def send_group_sync_ack(self,msg_type):
+        if msg_type == MessageType.GROUP_SYNC_ACK:
+            msg = Message(
+                mid=-1,
+                gsid=self.GSID.value,
+            )
+        elif msg_type == MessageType.GROUP_TRANSITION_ACK:
+            msg = Message(
+                mid=-1,
+                data=(self.config.view_id.get(), self.config.member_count.get()),
+                gsid=self.GSID.value,
+            )
+        self.multicast_message(msg,msg_type, sender_type="config")
 
 
 
 
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Start a UDP server')
+    parser.add_argument("--host", dest="host", default="0.0.0.0",
+                        help="Host IP for server. Default is '0.0.0.0'.")
+    parser.add_argument("--port", type=int, dest="port", default=8000,
+                        help="Host Port for server. Default is '8000'.")
+    parser.add_argument("--id", type=int, dest="id", default=1,
+                        help="Server ID. Default is 1.")
 
-
+    args = parser.parse_args()
+    local_ip = get_local_ip()
+    print('localIp: ', local_ip)
+    MCAST_IFACE = local_ip
+    server = UDPServer(args.id, args.host, args.port)
+    server.listen()

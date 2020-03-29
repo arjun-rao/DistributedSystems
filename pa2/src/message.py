@@ -16,11 +16,13 @@ class MessageType(IntEnum):
     GROUP_QUEUE_TX = 9
     GROUP_TRANSITION = 10
     GROUP_TRANSITION_ACK = 11
+    GROUP_STABLE_TRANSITION_REQUEST = 12
+    GROUP_STABLE_TRANSITION = 13
 
 class Message:
     def __init__(self,
                  mid: int = -1,
-                 data: str = '',
+                 data = None,
                  sender=(),
                  gsid=None,
                  sender_id=None,
