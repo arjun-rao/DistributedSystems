@@ -18,6 +18,8 @@ class MessageType(IntEnum):
     GROUP_TRANSITION_ACK = 11
     GROUP_STABLE_TRANSITION_REQUEST = 12
     GROUP_STABLE_TRANSITION = 13
+    GROUP_NACK_COMPLETE = 14
+
 
 class Message:
     def __init__(self,
@@ -28,13 +30,15 @@ class Message:
                  sender_id=None,
                  sender_type=None,
                  message_type=MessageType.UNKNOWN,
-                 error=None
+                 error=None,
+                 config_id=None
                  ):
         self.gsid = gsid
         self.mid = mid
         self.data = data
         self.message_type = message_type
         self.sender_id = sender_id
+        self.config_id = config_id
         # can be 'client' or 'server'
         self.sender_type = sender_type
         self.sender = sender
@@ -50,6 +54,7 @@ class Message:
             'sender_type': self.sender_type,
             'message_type': self.message_type,
             'error': self.error,
+            'config_id': self.config_id,
         })
 
     @classmethod
@@ -66,6 +71,7 @@ class Message:
             sender_type=payload['sender_type'],
             message_type=payload['message_type'],
             error=payload['error'],
+            config_id=payload['config_id'],
         )
 
     def has_gsid(self):
