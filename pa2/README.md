@@ -60,16 +60,30 @@ protocol as described below:
     ```
     Type 'help' at the prompt to see instructions for how to use the client.
 
+## Phase Two
+
+In this phase, we handle recovery from server failures and network partitions. 
+
+A group communication protocol is established in the network. 
+
+Recovery from server failures:
+* The group configuration moves to a transitive configuration when one or more servers fail from the existing group causing a new group confiuration to be formed.
+* The transitive configuration assures consistency of data amongst the different servers.
+* The servers in the transitive configuration reach stable state when all of their global squence numbers match.
+* Once a stable state is reached, the new group configuration is set up.
+* For servers that recover from failure, a new configuration is set up.
+
+Recovery from network partitions:
+* Incase of a network partition, new configurations are established at both ends of the partition.
+* The two groups exist individually, and process requests separately.
+* As per CAP theorem, in the event of a network partition, a distributed system can provide either consistency or availability, but not both. In our case, we prioritize Consistency over Availability. 
+* One of the paritions become the primary partition(we picked the partition that has the server with the highests server-id to be the primary partition), while the other partition(s) serve as the secondary partition(s). When the partition merges, the primary partition is used as a reference for all secondary partitions. The secondary partitions remove their current state and replace with data from the primary partition. 
 
 ## Current Status
 
 ### What works:
 
-* All functionalities expected from Phase 1 works.
-
-### What doesn't work:
-* Number of servers is fixed once you start. Server failures are not handled.
-
+* All functionalities expected from Phase 2 works.
 
 
 ## References
