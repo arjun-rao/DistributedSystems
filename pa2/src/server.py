@@ -109,6 +109,7 @@ class UDPServer(BaseServer):
         # Server's FTQueue
         self.queue = FTQueue(self.manager)
 
+        self.timer_sync = multiprocessing.Value('i', 1)
         self.GSID = multiprocessing.Value('i', 0)
         self.maxGSID = multiprocessing.Value('i', 0)
         self.counter = multiprocessing.Value('i', 0)
@@ -540,6 +541,13 @@ class UDPServer(BaseServer):
         multicast_process.daemon = True
         multicast_process.start()
 
+
+        # Timer for Sync
+        timer_sync_process = multiprocessing.Process(target=self.handle_timer_sync, args=())
+        timer_sync_process.daemon = True
+        timer_sync_process.start()
+
+
         with self.config_mode.get_lock():
             self.config_mode.value = ConfigStage.INIT
 
@@ -702,6 +710,31 @@ class UDPServer(BaseServer):
                         self.log_info('Re-sequencing message: {}', top_message.mid)
                         self.handle_raw_multicast_message(self.raw_message_buffer.pop(0))
             time.sleep(1)
+
+    def handle_timer_sync(self):
+        """Handles periodic timer synchronization
+        """
+        while True:
+            # check every minute
+            with self.config_mode.get_lock():
+                config_mode = self.config_mode.value
+            if config_mode == ConfigStage.STABLE:
+                with self.timer_sync.get_lock():
+                    sync_val = self.timer_sync.value
+                if sync_val == 1:
+                    time.sleep(60)
+                    with self.timer_sync.get_lock():
+                        self.timer_sync.value = 0
+                    continue
+                with self.timer_sync.get_lock():
+                    self.timer_sync.value = 1
+                with self.config_mode.get_lock():
+                    self.config_mode.value = ConfigStage.INIT
+            else:
+                time.sleep(60)
+
+
+
 
     def handle_group_sync(self):
         """Handles Group Synchronization
@@ -868,5 +901,9 @@ if __name__ == "__main__":
     local_ip = get_local_ip()
     print('localIp: ', local_ip)
     MCAST_IFACE = local_ip
+    # if args.id % 2 == 0:
+    #     MCAST_GRP = '224.1.1.1'
+    # else:
+    #     MCAST_GRP = '224.1.1.2'
     server = UDPServer(args.id, args.host, args.port)
     server.listen()
