@@ -377,9 +377,13 @@ class UDPServer(BaseServer):
         self.log_info('Started Deamon Process')
         while True:
             try:
-                data, addr = self.unicast_socket.recvfrom(self.BUFFERSIZE)
-                data = data.decode()
-                msg = Message.from_string(data)
+                try:
+                    self.unicast_socket.settimeout(2)
+                    data, addr = self.unicast_socket.recvfrom(self.BUFFERSIZE)
+                    data = data.decode()
+                    msg = Message.from_string(data)
+                except socket.timeout:
+                    continue
                 if msg.sender_type == "config":
                     self.config_msg_buffer.put(msg)
                     return
@@ -396,7 +400,28 @@ class UDPServer(BaseServer):
                         gsid = self.GSID.value
                     )
                     self.unicast_message(reply_msg, addr, MessageType.REQUEST_QUEUE_STATE_ACK, sender_type = 'config')
-
+                elif msg.message_type == MessageType.UPDATE_QUEUE_STATE:
+                    with self.GSID.get_lock():
+                        self.GSID.value = msg.gsid
+                    with self.maxGSID.get_lock():
+                        self.maxGSID.value = msg.data[1]
+                    self.queue.update_queue_state(msg.data[0])
+                    reply_msg = Message(
+                        mid = -1,
+                        gsid = self.GSID.value
+                    )
+                    self.unicast_message(reply_msg, addr, MessageType.UPDATE_QUEUE_STATE_ACK, sender_type = 'config')
+                    while True:
+                        try:
+                            self.unicast_socket.settimeout(3)
+                            data2, new_addr = self.unicast_socket.recvfrom(self.BUFFERSIZE)
+                            data2 = data2.decode()
+                            ack_msg = Message.from_string(data2)
+                            if ack_msg.message_type == MessageType.UPDATE_QUEUE_STATE_ACK:
+                                break
+                        except socket.timeout:
+                                self.unicast_message(reply_msg, addr, MessageType.UPDATE_QUEUE_STATE_ACK, sender_type = 'config')
+                                continue
             except Exception:
                 self.log_exception('An error occurred while listening for messages...')
 
@@ -430,9 +455,13 @@ class UDPServer(BaseServer):
         update_queue_ack_counter = 1
         while True:
             try:
-                data, addr = self.unicast_socket.recvfrom(self.BUFFERSIZE)
-                data = data.decode()
-                msg = Message.from_string(data)
+                try:
+                    self.unicast_socket.settimeout(3)
+                    data, addr = self.unicast_socket.recvfrom(self.BUFFERSIZE)
+                    data = data.decode()
+                    msg = Message.from_string(data)
+                except socket.timeout:
+                    continue
                 # TODO: Check if reply received for queue state. If so, send unicast messages to all
                 if msg.message_type == MessageType.REQUEST_QUEUE_STATE_ACK:
                     with self.GSID.get_lock():
@@ -448,18 +477,21 @@ class UDPServer(BaseServer):
                                 data = msg.data,
                                 gsid = msg.gsid,
                             )
-                            self.unicast_message(update_msg,server_addr,MessageType.UPDATE_QUEUE_STATE,sender_type = 'config')
+                            self.unicast_message(update_msg,server_addr,MessageType.UPDATE_QUEUE_STATE, sender_type = 'config')
 
                         elif msg.message_type == MessageType.UPDATE_QUEUE_STATE_ACK:
                             # count the number of such replies received. if it is equal to en(self.config.server_data.keys())
                             # then send partition resolved as multicast
                             update_queue_ack_counter += 1
+                            self.unicast_message(msg, addr, MessageType.UPDATE_QUEUE_STATE_ACK, sender_type = 'config')
                             if update_queue_ack_counter == len(self.config.server_data.keys()):
                                 ack_msg = Message(
                                     mid = -1,
                                     gsid =self.GSID.value
                                 )
                                 self.multicast_message(ack_msg, MessageType.PARTITION_RESOLVED, sender_type = 'config')
+                                time.sleep(2)
+                                self.start_group_sync()
             except Exception:
                     self.log_exception('An error occurred while listening for messages...')
 
@@ -475,18 +507,38 @@ class UDPServer(BaseServer):
                     ConfigStage(self.config_mode.value).name,
                     self.config.config_id.get())
                 )
+                if msg.message_type == MessageType.PARTITION_DETECTED:
+                    with self.config_mode.get_lock():
+                        self.config_mode.value = ConfigStage.WAIT_FOR_PARTITION_RESOLVE
+                    # empty config buffer
+                    while not self.config_msg_buffer.empty():
+                        self.config_msg_buffer.get()
+                elif msg.message_type == MessageType.PARTITION_RESOLVED:
+                    self.config.set_force_sync()
+                    with self.config_mode.get_lock():
+                        self.config_mode.value = ConfigStage.UNKNOWN
+
+                # Add elif for Partition Resolved, switch to UKNOWN config and call self.config.set_force_sync().
+
+
                 if msg.sender_type =='config' and msg.message_type == MessageType.GROUP_SYNC:
                     with self.config.lock:
                         member_count = self.config.member_count.get()
                     if self.config.should_force_sync():
+                        # empty config buffer
+                        while not self.config_msg_buffer.empty():
+                            self.config_msg_buffer.get()
                         with self.config_mode.get_lock():
                             self.config_mode.value = ConfigStage.UNKOWN
                         self.config.clear_force_sync()
                         self.config_msg_buffer.put(msg)
                         return 1
                     # Check if Group Sync is coming from another partition.
-                    elif msg.data[1] != member_count:
+                    elif msg.data[1] != member_count and msg.data[1] != 0:
                         if self.config.is_leader():
+                            # empty config buffer
+                            while not self.config_msg_buffer.empty():
+                                self.config_msg_buffer.get()
                             partition_msg = Message(
                                 mid=-1,
                                 gsid=self.GSID.value,
@@ -496,55 +548,25 @@ class UDPServer(BaseServer):
                             # set force sync to make sure next Group Sync is processed.
                             self.config.set_force_sync()
                             return -1
+
                 if self.config_mode.value == ConfigStage.STABLE:
                     if msg.sender_type =='config' and msg.message_type == MessageType.GROUP_SYNC:
-                        if msg.config:
+                        # Same partition or new member
+                        if msg.sender_id in self.config.server_data.keys() or msg.data[1] == 0:
+                            # empty config buffer
+                            while not self.config_msg_buffer.empty():
+                                self.config_msg_buffer.get()
                             with self.config_mode.get_lock():
                                 self.config_mode.value = ConfigStage.UNKOWN
                             self.config_msg_buffer.put(msg)
                             return 1
-
-                    elif msg.sender_type =='config' and msg.config_id != self.config.config_id.get():
-                        with self.config_mode.get_lock():
-                            self.config_mode.value = ConfigStage.INIT
-                        return -1
-
-                    elif msg.sender_type =='config' and msg.config_id != self.config.config_id.get():
-                        with self.config_mode.get_lock():
-                            self.config_mode.value = ConfigStage.INIT
-                        return -1
-
-                    elif msg.sender_type =='config' and msg.config_id != self.config.config_id.get():
-                        with self.config_mode.get_lock():
-                            self.config_mode.value = ConfigStage.INIT
-                        return -1
-
-                    elif msg.sender_type =='config' and msg.config_id != self.config.config_id.get():
-                        with self.config_mode.get_lock():
-                            self.config_mode.value = ConfigStage.INIT
-                        return -1
-
-                    elif msg.sender_type =='config' and msg.config_id != self.config.config_id.get():
-                        with self.config_mode.get_lock():
-                            self.config_mode.value = ConfigStage.INIT
-                        return -1
-
-                    elif msg.sender_type =='config' and msg.config_id != self.config.config_id.get():
-                        with self.config_mode.get_lock():
-                            self.config_mode.value = ConfigStage.INIT
-                        return -1
-
-                    elif msg.sender_type =='config' and msg.config_id != self.config.config_id.get():
-                        with self.config_mode.get_lock():
-                            self.config_mode.value = ConfigStage.INIT
-                        return -1
                     elif msg.sender_type == "server" and msg.sender_id != self._id:
                         if self.config.config_id.get() == msg.config_id:
                             self.multicast_buffer.put(msg)
                             return 1
-                        else:
+                        elif msg.sender_id in self.config.server_data.keys():
                             # Start Group Sync as you received out of context messages
-                            time.sleep(1)
+                            time.sleep(self._id * 5)
                             with self.config_mode.get_lock():
                                 self.config_mode.value = ConfigStage.INIT
                             return -1
@@ -554,11 +576,11 @@ class UDPServer(BaseServer):
                         return 1
                     else:
                         # Start Group Sync as you received out of context messages
-                        # TODO: Decide whether or not to go to unknown
-                        with self.config_mode.get_lock():
-                            self.config_mode.value = ConfigStage.UNKOWN
                         if msg.message_type == MessageType.GROUP_SYNC:
-                            self.config_msg_buffer.put(msg)
+                            if msg.sender_id in self.config.server_data.keys() or msg.data[1] == 0:
+                                with self.config_mode.get_lock():
+                                    self.config_mode.value = ConfigStage.UNKOWN
+                                self.config_msg_buffer.put(msg)
                         return -1
 
         except Exception:
