@@ -519,12 +519,13 @@ class UDPServer(BaseServer):
                     # empty config buffer
                     while not self.config_msg_buffer.empty():
                         self.config_msg_buffer.get()
+                    return
                 elif msg.message_type == MessageType.PARTITION_RESOLVED:
                     self.log_info('Partition Resolved - Waiting for Next Group Sync...')
                     self.config.set_force_sync()
                     with self.config_mode.get_lock():
                         self.config_mode.value = ConfigStage.UNKNOWN
-
+                    return
                 # Add elif for Partition Resolved, switch to UKNOWN config and call self.config.set_force_sync().
 
 
@@ -573,7 +574,7 @@ class UDPServer(BaseServer):
                         if self.config.config_id.get() == msg.config_id:
                             self.multicast_buffer.put(msg)
                             return 1
-                        elif msg.sender_id in self.config.server_data.keys():
+                        elif msg.sender_id in self.config.server_data.keys() or self.config.is_leader():
                             # Start Group Sync as you received out of context messages
                             time.sleep(self._id * 5)
                             with self.config_mode.get_lock():
