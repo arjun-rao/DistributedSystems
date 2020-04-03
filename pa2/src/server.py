@@ -571,6 +571,10 @@ class UDPServer(BaseServer):
                                 self.config_mode.value = ConfigStage.UNKOWN
                             self.config_msg_buffer.put(msg)
                             return 1
+                    elif msg.sender_type =='config' and msg.config_id != self.config.config_id.get():
+                        with self.config_mode.get_lock():
+                            self.config_mode.value = ConfigStage.INIT
+                        return -1
                     elif msg.sender_type == "server" and msg.sender_id != self._id:
                         if self.config.config_id.get() == msg.config_id:
                             self.multicast_buffer.put(msg)
@@ -733,10 +737,10 @@ class UDPServer(BaseServer):
                             with self.config_mode.get_lock():
                                 self.config_mode.value = ConfigStage.WAIT_FOR_NACK
                             self.request_retransmit_messages(is_config_mode=True)
-                        if self.config.can_transition():
-                                self.handle_shift_to_transition()
-                        else:
-                            continue
+                        # if self.config.can_transition():
+                        #         self.handle_shift_to_transition()
+                        # else:
+                        #     continue
 
                     elif config_msg.message_type == MessageType.GROUP_TRANSITION:
                         if config_mode != ConfigStage.WAIT_FOR_TRANSITION:
@@ -866,7 +870,7 @@ class UDPServer(BaseServer):
                     sync_val = self.timer_sync.value
                 if sync_val == 1:
                     self.log_info('Config Mode is stable, timer will start sync after 1 minute...')
-                    time.sleep(10 +  5 * self._id)
+                    time.sleep(60 +  5 * self._id)
                     with self.timer_sync.get_lock():
                         self.timer_sync.value = 0
                     continue
@@ -884,7 +888,7 @@ class UDPServer(BaseServer):
             #         self.send_group_sync_ack(MessageType.GROUP_TRANSITION_ACK)
             else:
                 self.log_info('No changes to config needed...')
-                time.sleep(10 +  5 * self._id)
+                time.sleep(60 +  5 * self._id)
 
     def start_group_sync(self):
         # Get member count before Sync
@@ -950,16 +954,16 @@ class UDPServer(BaseServer):
                 if config_mode in [ConfigStage.WAIT_FOR_ACK, ConfigStage.WAIT_FOR_TRANSITION, ConfigStage.UNKOWN]:
                     self.log_info('Listen Config: {}'.format(ConfigStage(self.config_mode.value).name))
                     retry_limit = 1
+                    reply_count = 0
                     self.log_info('Listening for Sync Messages')
                     with self.config_mode.get_lock():
                         config_mode = self.config_mode.value
                     while (retry_limit < 3 and config_mode == ConfigStage.WAIT_FOR_ACK) or \
                             (config_mode == ConfigStage.WAIT_FOR_TRANSITION) or (config_mode == ConfigStage.UNKOWN):
-                        reply_count = 0
                         try:
                             ## Wait for reply for 3 seconds to 6 seconds
                             self.multicast_socket.settimeout(1 * retry_limit)
-                            self.log_info('Listening... {}'.format(ConfigStage(config_mode).name))
+                            self.log_info('Wait for ACK/TACK... {}'.format(ConfigStage(config_mode).name))
                             data, addr = self.multicast_socket.recvfrom(self.BUFFERSIZE)
                             # self.log_info('MulticastMsg: {}'.format(data.decode()))
 
@@ -971,6 +975,7 @@ class UDPServer(BaseServer):
                                         break
                         except socket.timeout:
                             time.sleep(1)
+                            self.log_info('ACK/TACK timeout....')
                             with self.config_mode.get_lock():
                                 if self.config_mode.value not in [ConfigStage.WAIT_FOR_ACK, ConfigStage.WAIT_FOR_TRANSITION]:
                                     break
