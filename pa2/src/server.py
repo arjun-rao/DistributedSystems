@@ -870,7 +870,7 @@ class UDPServer(BaseServer):
                     sync_val = self.timer_sync.value
                 if sync_val == 1:
                     self.log_info('Config Mode is stable, timer will start sync after 1 minute...')
-                    time.sleep(60 +  5 * self._id)
+                    time.sleep(120 +  5 * self._id)
                     with self.timer_sync.get_lock():
                         self.timer_sync.value = 0
                     continue
@@ -888,7 +888,7 @@ class UDPServer(BaseServer):
             #         self.send_group_sync_ack(MessageType.GROUP_TRANSITION_ACK)
             else:
                 self.log_info('No changes to config needed...')
-                time.sleep(60 +  5 * self._id)
+                time.sleep(120 +  5 * self._id)
 
     def start_group_sync(self):
         # Get member count before Sync
