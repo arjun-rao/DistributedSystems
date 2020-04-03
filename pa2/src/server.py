@@ -243,6 +243,8 @@ class UDPServer(BaseServer):
 
         self.log_info('Delivered Message: {}'.format(message.mid))
 
+        self.delivered_messages[self.GSID.value] = message
+
         # Print the queue to console for debugging
         self.queue.qDisplay()
 
@@ -347,7 +349,7 @@ class UDPServer(BaseServer):
                 msg.gsid = self.GSID.value
                 self.log_info('GSID {} Issued to message: {}'.format(self.GSID.value, msg.mid))
                 msg.message_type = MessageType.MULTICAST_SEQUENCED
-                self.delivered_messages[self.GSID.value] = msg
+                # self.delivered_messages[self.GSID.value] = msg
                 self.multicast_message(msg, MessageType.MULTICAST_SEQUENCED)
                 # Deliver the message locally.
                 self.deliver_message(msg)
@@ -990,7 +992,7 @@ class UDPServer(BaseServer):
                             (retry_limit <  5 and config_mode == ConfigStage.WAIT_FOR_TRANSITION) or (config_mode == ConfigStage.UNKOWN):
                         try:
                             ## Wait for reply for 3 seconds to 6 seconds
-                            self.multicast_socket.settimeout(3 * retry_limit)
+                            self.multicast_socket.settimeout(2 * retry_limit + self._id * 2)
                             self.log_info('Wait for ACK/TACK... {}'.format(ConfigStage(config_mode).name))
                             data, addr = self.multicast_socket.recvfrom(self.BUFFERSIZE)
                             # self.log_info('MulticastMsg: {}'.format(data.decode()))
