@@ -64,7 +64,7 @@ class FTQueue:
 
     def get_queue_state(self):
         queue = {key: list(value) for key, value in self.data.items()}
-        return json.dumps(self.data)
+        return json.dumps(self.queue)
 
     def update_queue_state(self, queue_str):
         with self.lock:

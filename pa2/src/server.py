@@ -163,8 +163,9 @@ class UDPServer(BaseServer):
 
             # allow reuse of addresses
             if sys.platform.startswith('darwin'):
-                self.multicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.multicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                self.multicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            self.multicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
 
             # # set multicast interface to local_ip
             # self.multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(MCAST_IFACE))
@@ -757,7 +758,7 @@ class UDPServer(BaseServer):
                             while not self.config_msg_buffer.empty():
                                 self.config_msg_buffer.get()
                             self.log_info('Transitioned to Stable, View id set to: {}, members: {}'.format(self.config.view_id.get(), self.config.member_count.get()))
-                            self.queue.qDisplay()
+                            self.log_info('Queue: {}'.format(self.queue.get_queue_state()))
                             continue
 
                     elif config_msg.message_type == MessageType.GROUP_TRANSITION_ACK:
@@ -776,7 +777,7 @@ class UDPServer(BaseServer):
                             while not self.config_msg_buffer.empty():
                                 self.config_msg_buffer.get()
                             self.log_info('Transitioned to Stable, View id set to: {}, members: {}'.format(self.config.view_id.get(), self.config.member_count.get()))
-                            self.queue.qDisplay()
+                            self.log_info('Queue: {}'.format(self.queue.get_queue_state()))
                             continue
 
                     elif config_msg.message_type == MessageType.SERVER_NACK:
