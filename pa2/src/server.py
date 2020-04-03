@@ -450,7 +450,8 @@ class UDPServer(BaseServer):
         msg = Message(
                 mid = -1,
                 gsid = self.GSID.value
-            )
+        )
+        self.log_info('Sent Request Queue State')
         self.unicast_message(msg,master_server_addr,MessageType.REQUEST_QUEUE_STATE,sender_type='config')
         update_queue_ack_counter = 1
         while True:
@@ -464,11 +465,14 @@ class UDPServer(BaseServer):
                     continue
                 # TODO: Check if reply received for queue state. If so, send unicast messages to all
                 if msg.message_type == MessageType.REQUEST_QUEUE_STATE_ACK:
+                    self.log_info('Received Request Queue Ack')
                     with self.GSID.get_lock():
                         self.GSID.value = msg.gsid
                     with self.maxGSID.get_lock():
                         self.maxGSID.value = msg.data[1]
                     self.queue.update_queue_state(msg.data[0])
+                    self.log_info('Updated Queue State:')
+                    self.queue.qDisplay()
                     for keys,values in self.config.server_data.items():
                         if values['addr']  != self._addr:
                             server_addr = values['addr']
@@ -489,6 +493,7 @@ class UDPServer(BaseServer):
                                     mid = -1,
                                     gsid =self.GSID.value
                                 )
+                                self.log_info('Partition Resolved, Will Start Group Sync...')
                                 self.multicast_message(ack_msg, MessageType.PARTITION_RESOLVED, sender_type = 'config')
                                 time.sleep(2)
                                 self.start_group_sync()
@@ -508,12 +513,14 @@ class UDPServer(BaseServer):
                     self.config.config_id.get())
                 )
                 if msg.message_type == MessageType.PARTITION_DETECTED:
+                    self.log_info('Partition Detect Received - Switching to Wait for partition resolve')
                     with self.config_mode.get_lock():
                         self.config_mode.value = ConfigStage.WAIT_FOR_PARTITION_RESOLVE
                     # empty config buffer
                     while not self.config_msg_buffer.empty():
                         self.config_msg_buffer.get()
                 elif msg.message_type == MessageType.PARTITION_RESOLVED:
+                    self.log_info('Partition Resolved - Waiting for Next Group Sync...')
                     self.config.set_force_sync()
                     with self.config_mode.get_lock():
                         self.config_mode.value = ConfigStage.UNKNOWN
@@ -536,6 +543,7 @@ class UDPServer(BaseServer):
                     # Check if Group Sync is coming from another partition.
                     elif msg.data[1] != member_count and msg.data[1] != 0:
                         if self.config.is_leader():
+                            self.log_info('Partition Detected: self({}) != {}'.format(member_count, msg.data[1]))
                             # empty config buffer
                             while not self.config_msg_buffer.empty():
                                 self.config_msg_buffer.get()
@@ -543,6 +551,7 @@ class UDPServer(BaseServer):
                                 mid=-1,
                                 gsid=self.GSID.value,
                             )
+                            self.log_info('Sent Partition Detected')
                             self.multicast_message(partition_msg, MessageType.PARTITION_DETECTED, sender_type='config')
                             self.sync_queue_state(msg.sender)
                             # set force sync to make sure next Group Sync is processed.
@@ -747,6 +756,7 @@ class UDPServer(BaseServer):
                             while not self.config_msg_buffer.empty():
                                 self.config_msg_buffer.get()
                             self.log_info('Transitioned to Stable, View id set to: {}, members: {}'.format(self.config.view_id.get(), self.config.member_count.get()))
+                            self.queue.qDisplay()
                             continue
 
                     elif config_msg.message_type == MessageType.GROUP_TRANSITION_ACK:
@@ -765,6 +775,7 @@ class UDPServer(BaseServer):
                             while not self.config_msg_buffer.empty():
                                 self.config_msg_buffer.get()
                             self.log_info('Transitioned to Stable, View id set to: {}, members: {}'.format(self.config.view_id.get(), self.config.member_count.get()))
+                            self.queue.qDisplay()
                             continue
 
                     elif config_msg.message_type == MessageType.SERVER_NACK:
@@ -853,7 +864,7 @@ class UDPServer(BaseServer):
                     sync_val = self.timer_sync.value
                 if sync_val == 1:
                     self.log_info('Config Mode is stable, timer will start sync after 1 minute...')
-                    time.sleep(60 +  5 * self._id)
+                    time.sleep(10 +  5 * self._id)
                     with self.timer_sync.get_lock():
                         self.timer_sync.value = 0
                     continue
@@ -871,7 +882,7 @@ class UDPServer(BaseServer):
             #         self.send_group_sync_ack(MessageType.GROUP_TRANSITION_ACK)
             else:
                 self.log_info('No changes to config needed...')
-                time.sleep(60 +  5 * self._id)
+                time.sleep(10 +  5 * self._id)
 
     def start_group_sync(self):
         # Get member count before Sync
@@ -1073,9 +1084,9 @@ if __name__ == "__main__":
     local_ip = get_local_ip()
     print('localIp: ', local_ip)
     MCAST_IFACE = local_ip
-    if args.id % 2 == 0:
-        MCAST_GRP = '224.1.1.1'
-    else:
-        MCAST_GRP = '224.1.1.2'
+    # if args.id % 2 == 0:
+    #     MCAST_GRP = '224.1.1.1'
+    # else:
+    #     MCAST_GRP = '224.1.1.2'
     server = UDPServer(args.id, args.host, args.port)
     server.listen()
