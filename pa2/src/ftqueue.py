@@ -1,5 +1,6 @@
 from collections import defaultdict
 from enum import IntEnum, unique
+import json
 
 # Error codes for queue errors
 @unique
@@ -10,13 +11,15 @@ class QueueErrors(IntEnum):
 
 
 class FTQueue:
-    def __init__(self, sync_manager):
+    def __init__(self, sync_manager, sync_lock):
         self.manager = sync_manager
         self.data =  self.manager.dict()
+        self.lock = sync_lock
 
     def qCreate(self, label: int) -> int:
-        if label not in self.data.keys():
-            self.data[label] = self.manager.list()
+        with self.lock:
+            if label not in self.data.keys():
+                self.data[label] = self.manager.list()
         return label, None
 
     def qId(self, label: int) -> int:
@@ -25,24 +28,27 @@ class FTQueue:
         return -1, QueueErrors.QUEUE_NOT_FOUND
 
     def qDestroy(self,queue_id: int):
-        if self.qId(queue_id) != -1:
-            del self.data[queue_id]
-            return queue_id, None
-        else:
-            return None, QueueErrors.QUEUE_NOT_FOUND
+        with self.lock:
+            if self.qId(queue_id) != -1:
+                del self.data[queue_id]
+                return queue_id, None
+            else:
+                return None, QueueErrors.QUEUE_NOT_FOUND
 
     def qPush(self, queue_id: int, item: int):
-        if self.qId(queue_id)[0] == -1:
-            self.qCreate(queue_id)
-        self.data[queue_id].append(item)
-        return None, None
+        with self.lock:
+            if self.qId(queue_id)[0] == -1:
+                self.qCreate(queue_id)
+            self.data[queue_id].append(item)
+            return None, None
 
     def qPop(self,queue_id: int) -> int:
-        if self.qId(queue_id)[0] != -1:
-            if self.qSize(queue_id)[0] > 0:
-                return self.data[queue_id].pop(0), None
-            return None, QueueErrors.QUEUE_EMPTY
-        return None, QueueErrors.QUEUE_NOT_FOUND
+        with self.lock:
+            if self.qId(queue_id)[0] != -1:
+                if self.qSize(queue_id)[0] > 0:
+                    return self.data[queue_id].pop(0), None
+                return None, QueueErrors.QUEUE_EMPTY
+            return None, QueueErrors.QUEUE_NOT_FOUND
 
     def qTop(self, queue_id: int) -> int:
         if self.qId(queue_id)[0] != -1:
@@ -55,6 +61,18 @@ class FTQueue:
         if self.qId(queue_id)[0] != -1:
             return len(self.data[queue_id]), None
         return None, QueueErrors.QUEUE_NOT_FOUND
+
+    def get_queue_state(self):
+        queue = {key: list(value) for key, value in self.data.items()}
+        return json.dumps(self.data)
+
+    def update_queue_state(self, queue_str):
+        with self.lock:
+            queue = json.loads(queue_str)
+            for key in self.data.keys():
+                del self.data[key]
+            for key, value in queue.items():
+                self.data[key] = self.manager.list(value)
 
     def qDisplay(self):
         for item, value in self.data.items():
