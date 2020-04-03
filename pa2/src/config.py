@@ -10,6 +10,7 @@ class ConfigStage(IntEnum):
     STABLE = 3
     UNKOWN = 4
     WAIT_FOR_NACK = 5
+    WAIT_FOR_PARTITION_RESOLVE = 6
 
 class Config:
     def __init__(self, sync_manager, lock, server_id):
@@ -25,6 +26,7 @@ class Config:
             self.server_data = self.manager.dict()
             self.view_id = self.manager.Value('i', -1)
             self.server_id = self.manager.Value('i', server_id)
+            self.force_sync = self.manager.Value('i', 0)
 
     def generate_config_id(self):
         with self.lock:
@@ -63,6 +65,18 @@ class Config:
     def add_server(self, server_id, unicast_addr, gsid):
         with self.lock:
             self.server_data[server_id] = {'addr': unicast_addr, 'gsid': gsid}
+
+    def should_force_sync(self):
+        with self.lock:
+            return self.force_sync.get() == 1
+
+    def set_force_sync(self):
+        with self.lock:
+            return self.force_sync.set(1)
+
+    def clear_force_sync(self):
+        with self.lock:
+            return self.force_sync.set(0)
 
     def reset_gsid(self):
         with self.lock:
