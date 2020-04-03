@@ -44,6 +44,9 @@ class Config:
     def get_server_from_view(self,view_id):
         return self.server_view[view_id]
 
+    def has_member(self, server_id):
+        return server_id in self.server_view.keys()
+
     def add_member(self, server_id, unicast_addr, gsid, view_id):
         with self.lock:
             if server_id not in self.server_view.keys():
@@ -52,6 +55,29 @@ class Config:
                 self.view_server[view_id] = server_id
         self.add_server(server_id, unicast_addr, gsid)
         return view_id
+
+    def get_transition_data(self):
+        with self.lock:
+            view_server = {key: value for key, value in self.view_server.items()}
+            server_view = {key: value for key, value in self.server_view.items()}
+            data = {
+                'view_server': view_server,
+                'server_view': server_view,
+                'member_count': self.member_count.get()
+            }
+            return json.dumps(data)
+
+
+    def load_transition_data(self, data_str):
+        data = json.loads(data_str)
+        self.reset_view_ids()
+        with self.lock:
+            for key, value in data['view_server'].items():
+                self.view_server[int(key)] = int(value)
+            for key, value in data['server_view'].items():
+                self.server_view[int(key)] = int(value)
+            self.member_count.set(data['member_count'])
+            self.view_id.set(self.server_view[self.server_id.get()])
 
     def reset_view_ids(self):
         with self.lock:
@@ -115,8 +141,10 @@ class Config:
             expected_count = self.member_count.get()
             for key in self.server_data.keys():
                 if 'member_count' not in self.server_data[key]:
+                    print('member count not in key: {}'.format(key))
                     return False
                 if self.server_data[key]['member_count'] != expected_count:
+                    print('member count not equal: {} ({}) != {}'.format(self.server_data[key]['member_count'], key, expected_count))
                     return False
             return True
 

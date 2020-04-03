@@ -101,7 +101,7 @@ class UDPServer(BaseServer):
         self.HOST = HOST
         self.PORT = PORT
         self._id = sid
-        self.BUFFERSIZE = 1024
+        self.BUFFERSIZE = 8024
         self.manager = Manager()
         self.lock = Lock()
         self.config = Config(self.manager, self.lock, self._id)
@@ -329,6 +329,7 @@ class UDPServer(BaseServer):
                     self.multicast_message(msg, MessageType.SERVER_NACK, sender_type='config')
                 else:
                     self.multicast_message(msg, MessageType.SERVER_NACK, sender_type='server')
+                break
 
     def handle_raw_multicast_message(self, msg: Message):
         """Checks if self is responsible, otherwise stores in raw_message buffer
@@ -379,15 +380,20 @@ class UDPServer(BaseServer):
         while True:
             try:
                 try:
-                    self.unicast_socket.settimeout(2)
+                    self.unicast_socket.settimeout(1)
                     data, addr = self.unicast_socket.recvfrom(self.BUFFERSIZE)
                     data = data.decode()
                     msg = Message.from_string(data)
-                except socket.timeout:
+                    print('Unicast Recv: {} {}', MessageType(msg.message_type).name, msg.data)
+                except:
+                    # print('No unicast message...')
+                    time.sleep(1)
                     continue
+
                 if msg.sender_type == "config":
+                    print('Unicast Config: {} {}', MessageType(msg.message_type).name, msg.data)
                     self.config_msg_buffer.put(msg)
-                    return
+                    continue
                 if msg.message_type == MessageType.CLIENT_REQUEST:
                     msg.sender = addr
                     self.raw_client_buffer.put(msg)
@@ -432,14 +438,20 @@ class UDPServer(BaseServer):
         self.log_info('Listening for messages...')
         while True:
             try:
-                try:
-                    self.multicast_socket.settimeout(1)
-                    data, addr = self.multicast_socket.recvfrom(self.BUFFERSIZE)
-                    # self.log_info('MulticastMsg: {}'.format(data.decode()))
-                    self._process_multicast_recv(data, addr)
-                except socket.timeout:
-                    # self.log_info('No new messages...')
-                    pass
+                with self.config_mode.get_lock():
+                    config_mode = self.config_mode.value
+
+                if config_mode not in [ConfigStage.WAIT_FOR_ACK, ConfigStage.WAIT_FOR_TRANSITION]:
+                    try:
+                        self.multicast_socket.settimeout(1)
+                        data, addr = self.multicast_socket.recvfrom(self.BUFFERSIZE)
+                        # self.log_info('MulticastMsg: {}'.format(data.decode()))
+                        self._process_multicast_recv(data, addr)
+                    except socket.timeout:
+                        # self.log_info('No new messages...')
+                        pass
+                else:
+                    time.sleep(1)
             except Exception:
                 self.log_exception('An error occurred while listening for messages...')
 
@@ -543,7 +555,7 @@ class UDPServer(BaseServer):
                         self.config_msg_buffer.put(msg)
                         return 1
                     # Check if Group Sync is coming from another partition.
-                    elif msg.data[1] != member_count and msg.data[1] != 0:
+                    elif msg.data[1] != member_count and msg.data[1] != 0 and member_count != 0:
                         if self.config.is_leader():
                             self.log_info('Partition Detected: self({}) != {}'.format(member_count, msg.data[1]))
                             # empty config buffer
@@ -585,6 +597,25 @@ class UDPServer(BaseServer):
                             with self.config_mode.get_lock():
                                 self.config_mode.value = ConfigStage.INIT
                             return -1
+                    elif msg.sender_type == "config" and self.config.config_id.get() == msg.config_id:
+                        # if msg.message_type == MessageType.GROUP_TRANSITION_ACK:
+                        #     if msg.data[1] != self.config.member_count.get():
+                        #         with self.config_mode.get_lock():
+                        #             self.config_mode.value = ConfigStage.INIT
+                        #         return -1
+                        #     if self.config.is_leader():
+                        #         msg = Message(
+                        #             mid=-1,
+                        #             data=self.config.get_transition_data(),
+                        #             gsid=self.GSID.value,
+                        #         )
+                        #         self.multicast_message(msg,MessageType.GROUP_TRANSITION, sender_type="config")
+                        #         self.log_info('ReSent Group Transition, view_id: {}'.format(self.config.view_id.get()))
+                        #         self.log_info('ServerData: {}'.format(self.config.server_data))
+                        #         self.log_info('Views: {}'.format(self.config.server_view))
+                        #     else:
+                        #         self.send_group_sync_ack(MessageType.GROUP_TRANSITION_ACK)
+                        return 1
                 else:
                     if msg.sender_type == "config" and self.config.config_id.get() == msg.config_id:
                         self.config_msg_buffer.put(msg)
@@ -601,6 +632,7 @@ class UDPServer(BaseServer):
         except Exception:
             self.log_exception('Failed to decode multicast message: {}'.format(data))
         print('Returning False')
+        self.log_info('After MM({}): {} with data: {}'.format(msg.config_id,MessageType(msg.message_type).name, (msg.gsid, msg.data)))
         return False
 
     def unicast_message(self, msg, dest, msg_type, sender_type='server'):
@@ -626,6 +658,7 @@ class UDPServer(BaseServer):
     def multicast_message(self, msg, msg_type, sender_type='server'):
         """Send a multicast message
         """
+
         try:
             with self.config.lock:
                 config_id = self.config.config_id.get()
@@ -708,6 +741,7 @@ class UDPServer(BaseServer):
                 if not self.config_msg_buffer.empty():
                     config_msg = self.config_msg_buffer.get()
                     self.log_info('ConfigID: {}'.format(self.config.config_id.get()))
+                    self.log_info('ConfigMode: {}'.format(ConfigStage(self.config_mode.value).name))
                     self.log_info('Processing MM({}): {} with data: {}'.format(config_msg.config_id,MessageType(config_msg.message_type).name, (config_msg.gsid, config_msg.data)))
                     with self.config_mode.get_lock():
                         config_mode = self.config_mode.value
@@ -737,33 +771,26 @@ class UDPServer(BaseServer):
                             with self.config_mode.get_lock():
                                 self.config_mode.value = ConfigStage.WAIT_FOR_NACK
                             self.request_retransmit_messages(is_config_mode=True)
+
                         # if self.config.can_transition():
                         #         self.handle_shift_to_transition()
                         # else:
                         #     continue
 
                     elif config_msg.message_type == MessageType.GROUP_TRANSITION:
-                        if config_mode != ConfigStage.WAIT_FOR_TRANSITION:
-                            if self.config.can_transition():
-                                self.handle_shift_to_transition()
-                            else:
-                                continue
+
+                        self.log_info('Got Transition Message')
                         # compute new view id
-                        self.config.view_id.set(self.config.compute_view_id())
-                        # adding its own data to view
-                        self.config.add_member(self._id,(self.HOST,self.PORT), self.GSID.value, self.config.view_id.get())
-                        self.add_member_from_msg(config_msg)
-                        # Acknowledge the message
-                        self.send_group_sync_ack(MessageType.GROUP_TRANSITION_ACK)
-                        # Transition to stable state when we have received everyone's member counts and they are equal.
-                        if self.config.can_transition_to_stable():
-                            with self.config_mode.get_lock():
-                                self.config_mode.value = ConfigStage.STABLE
-                            while not self.config_msg_buffer.empty():
-                                self.config_msg_buffer.get()
-                            self.log_info('Transitioned to Stable, View id set to: {}, members: {}'.format(self.config.view_id.get(), self.config.member_count.get()))
-                            self.log_info('Queue: {}'.format(self.queue.get_queue_state()))
-                            continue
+                        self.config.load_transition_data(config_msg.data)
+                        self.log_info('Loaded Transition Data')
+
+                        with self.config_mode.get_lock():
+                            self.config_mode.value = ConfigStage.STABLE
+                        while not self.config_msg_buffer.empty():
+                            self.config_msg_buffer.get()
+                        self.log_info('Transitioned to Stable, View id set to: {}, members: {}'.format(self.config.view_id.get(), self.config.member_count.get()))
+                        self.log_info('Queue: {}'.format(self.queue.get_queue_state()))
+                        continue
 
                     elif config_msg.message_type == MessageType.GROUP_TRANSITION_ACK:
                         if config_mode != ConfigStage.WAIT_FOR_TRANSITION:
@@ -772,17 +799,18 @@ class UDPServer(BaseServer):
                             else:
                                 continue
 
-                        self.add_member_from_msg(config_msg)
-                        self.send_group_sync_ack(MessageType.GROUP_TRANSITION_ACK)
-                        # Transition to stable state when we have received everyone's member counts and they are equal.
-                        if self.config.can_transition_to_stable():
-                            with self.config_mode.get_lock():
-                                self.config_mode.value = ConfigStage.STABLE
-                            while not self.config_msg_buffer.empty():
-                                self.config_msg_buffer.get()
-                            self.log_info('Transitioned to Stable, View id set to: {}, members: {}'.format(self.config.view_id.get(), self.config.member_count.get()))
-                            self.log_info('Queue: {}'.format(self.queue.get_queue_state()))
-                            continue
+                    #     if not self.config.has_member(config_msg.sender_id):
+                    #         self.add_member_from_msg(config_msg)
+                    #         self.send_group_sync_ack(MessageType.GROUP_TRANSITION_ACK)
+                    #     # Transition to stable state when we have received everyone's member counts and they are equal.
+                    #     if self.config.can_transition_to_stable():
+                    #         with self.config_mode.get_lock():
+                    #             self.config_mode.value = ConfigStage.STABLE
+                    #         while not self.config_msg_buffer.empty():
+                    #             self.config_msg_buffer.get()
+                    #         self.log_info('Transitioned to Stable, View id set to: {}, members: {}'.format(self.config.view_id.get(), self.config.member_count.get()))
+                    #         self.log_info('Queue: {}'.format(self.queue.get_queue_state()))
+                    #         continue
 
                     elif config_msg.message_type == MessageType.SERVER_NACK:
                         # Send the previously sequenced message to server who sent NACK
@@ -790,8 +818,9 @@ class UDPServer(BaseServer):
                         self.log_info('Received NACK request for {}'.format(gsid))
                         if gsid in self.delivered_messages:
                             send_msg = self.delivered_messages[gsid]
-                            self.log_info('Sending NACK reply for {}'.format(gsid))
-                            self.unicast_message(send_msg, config_msg.sender, MessageType.SERVER_NACK_REPLY, sender_type='config')
+                            self.unicast_message(send_msg, config_msg.sender,
+                                MessageType.SERVER_NACK_REPLY, sender_type='config')
+                            self.log_info('Sent NACK reply for {}'.format(gsid))
                         with self.config_mode.get_lock():
                                 self.config_mode.value = ConfigStage.WAIT_FOR_NACK
 
@@ -811,13 +840,12 @@ class UDPServer(BaseServer):
                         self.handle_sequenced_multicast_message(config_msg)
                         if self.GSID.value == self.maxGSID.value:
                             self.send_group_sync_ack(MessageType.GROUP_NACK_COMPLETE)
-                            self.config.add_server(self._id, (self.HOST,self.PORT), self.GSID.value)
-                            with self.config_mode.get_lock():
-                                self.config_mode.value = ConfigStage.WAIT_FOR_ACK
-                            if self.config.can_transition():
-                                self.handle_shift_to_transition()
-                            else:
-                                continue
+                            self.start_group_sync()
+                        else:
+                            if self.GSID.value < self.maxGSID.value:
+                                with self.config_mode.get_lock():
+                                    self.config_mode.value = ConfigStage.WAIT_FOR_NACK
+                                self.request_retransmit_messages(True)
 
             elif self.config_mode.value == ConfigStage.STABLE:
                 if not self.raw_client_buffer.empty():
@@ -959,10 +987,10 @@ class UDPServer(BaseServer):
                     with self.config_mode.get_lock():
                         config_mode = self.config_mode.value
                     while (retry_limit < 3 and config_mode == ConfigStage.WAIT_FOR_ACK) or \
-                            (config_mode == ConfigStage.WAIT_FOR_TRANSITION) or (config_mode == ConfigStage.UNKOWN):
+                            (retry_limit <  5 and config_mode == ConfigStage.WAIT_FOR_TRANSITION) or (config_mode == ConfigStage.UNKOWN):
                         try:
                             ## Wait for reply for 3 seconds to 6 seconds
-                            self.multicast_socket.settimeout(1 * retry_limit)
+                            self.multicast_socket.settimeout(3 * retry_limit)
                             self.log_info('Wait for ACK/TACK... {}'.format(ConfigStage(config_mode).name))
                             data, addr = self.multicast_socket.recvfrom(self.BUFFERSIZE)
                             # self.log_info('MulticastMsg: {}'.format(data.decode()))
@@ -980,6 +1008,13 @@ class UDPServer(BaseServer):
                                 if self.config_mode.value not in [ConfigStage.WAIT_FOR_ACK, ConfigStage.WAIT_FOR_TRANSITION]:
                                     break
                             retry_limit += 1
+                            if self.config_mode.value == ConfigStage.WAIT_FOR_TRANSITION:
+                                if self.config.is_leader():
+                                    self.handle_shift_to_transition()
+                                # else:
+                                    # self.send_group_sync_ack(MessageType.GROUP_TRANSITION_ACK)
+                            else:
+                                self.send_group_sync_ack(MessageType.GROUP_SYNC_ACK)
                             if reply_count == 0:
                                 self.log_info('No reply received within timeout... retrying..')
                                 if self.config_mode.value == ConfigStage.WAIT_FOR_ACK :
@@ -991,6 +1026,9 @@ class UDPServer(BaseServer):
                         if self.config_mode.value not in [ConfigStage.WAIT_FOR_ACK, ConfigStage.WAIT_FOR_TRANSITION]:
                             continue
                     self.multicast_socket.settimeout(None)
+                    if self.config_mode.value == ConfigStage.WAIT_FOR_TRANSITION and retry_limit >= 5:
+                        with self.config_mode.get_lock():
+                            self.config_mode.value = ConfigStage.INIT
                     if reply_count == 0 and self.config_mode.value == ConfigStage.WAIT_FOR_ACK:
                         self.config.reset_gsid()
                         self.config.reset_view_ids()
@@ -1041,21 +1079,35 @@ class UDPServer(BaseServer):
                 #  Reset the view IDs here.
                 self.config.reset_view_ids()
                 with self.lock:
-                    self.config.view_id.set(self.config.compute_view_id())
+                    self.config.view_id.set(0)
                 self.config.add_member(self._id, (self.HOST,self.PORT), self.GSID.value, self.config.view_id.get())
+                next_view_id = 1
+                for key, data in self.config.server_data.items():
+                    if key == self._id:
+                        continue
+                    self.config.add_member(key,data['addr'], data['gsid'], next_view_id)
+                    next_view_id += 1
                 with self.lock:
                     data = self.config.server_data[self._id]
                     data['member_count'] = self.config.member_count.get()
                     self.config.server_data[self._id] = data
                 msg = Message(
                     mid=-1,
-                    data=(self.config.view_id.get(), self.config.member_count.get()),
+                    data=self.config.get_transition_data(),
                     gsid=self.GSID.value,
                 )
+                self.log_info('Transition Data: {}'.format(msg.data))
                 self.multicast_message(msg,MessageType.GROUP_TRANSITION, sender_type="config")
                 self.log_info('Sent Group Transition, view_id: {}'.format(self.config.view_id.get()))
                 self.log_info('ServerData: {}'.format(self.config.server_data))
                 self.log_info('Views: {}'.format(self.config.server_view))
+                with self.config_mode.get_lock():
+                    self.config_mode.value = ConfigStage.STABLE
+                while not self.config_msg_buffer.empty():
+                    self.config_msg_buffer.get()
+                self.log_info('Transitioned to Stable, View id set to: {}, members: {}'.format(self.config.view_id.get(), self.config.member_count.get()))
+                self.log_info('Queue: {}'.format(self.queue.get_queue_state()))
+                return True
             else:
                 self.send_group_sync_ack(MessageType.GROUP_TRANSITION_ACK)
             return True
