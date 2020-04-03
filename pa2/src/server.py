@@ -575,7 +575,7 @@ class UDPServer(BaseServer):
                         if self.config.config_id.get() == msg.config_id:
                             self.multicast_buffer.put(msg)
                             return 1
-                        elif msg.sender_id in self.config.server_data.keys() or self.config.is_leader():
+                        else:
                             # Start Group Sync as you received out of context messages
                             time.sleep(self._id * 5)
                             with self.config_mode.get_lock():
